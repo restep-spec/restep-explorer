@@ -1,0 +1,207 @@
+# restep-explorer
+
+Explorador web de cualquier API Restep 1, el equivalente a Swagger UI sin OpenAPI: lee el
+documento de descubrimiento (§4.2) y construye a partir de él toda la interfaz. Sin dependencias,
+sin CDN y sin fuentes externas, en inglés y en español. Se publica en `restep.wubytes.com`:
+`/explorer/` (inglés) y `/es/explorador/` (español).
+
+## Archivos
+
+La fuente está aquí; `build.mjs` genera lo publicado en `public/`.
+
+| Fuente | Qué es |
+|---|---|
+| `page.html` | Plantilla de la página: `{{clave}}` (texto del diccionario, escapado), `{{{claveHtml}}}` (marcado del diccionario) y `{{=variable}}` (rutas y URL que pone `build.mjs`). |
+| `explorer-i18n.js` | El diccionario de textos, `en` y `es`, el único sitio con textos. Lo usan `build.mjs` y la página. |
+| `explorer-logic.js` | Lógica pura, sin DOM (`RestepLogic`): se prueba en Node. Toma el idioma de `<html lang>`. |
+| `explorer.js` | La interfaz: construye la página con DOM a partir de `RestepLogic`. |
+| `explorer-theme.js` | Aplica el tema guardado antes de pintar (se carga sin `defer`). |
+| `explorer.css` | Estilos. |
+
+```bash
+node tools/restep-explorer/build.mjs       # desde projects/restep
+```
+
+escribe `public/explorer/index.html` (`lang="en"`), `public/es/explorador/index.html`
+(`lang="es"`) y, en `public/explorer/`, los `.css` y `.js` compartidos, que las dos páginas cargan
+con ruta absoluta `/explorer/…`. Son scripts clásicos (con `defer`, en orden), no módulos ES: no
+hace falta `modulepreload`. Si algún día pasan a módulos, cada página tiene que precargar todo el
+grafo.
+
+### CSP
+
+Las páginas no llevan ningún script ni estilo en línea, ni `style=`, ni manejadores `on*=` (la
+interfaz usa clases y `addEventListener`). La CSP va en la cabecera HTTP, no en un `<meta>`; para
+`/explorer/*` y `/es/explorador/*` tiene que ser:
+
+```
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src http: https:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+```
+
+La CSP global de `public/_headers` (`script-src 'none'`) no deja funcionar el explorador: esas dos
+rutas necesitan la suya. `connect-src http: https:` es lo que permite hablar con cualquier API.
+
+## Qué hace
+
+- **Resumen de la API**: versión de Restep y de la API, perfiles, extensiones, retiradas
+  anunciadas (§5.5), botón para consultar el recurso de estado (§4.4) y, por colección, ruta,
+  descripción, métodos, filtros con su tipo y operadores, orden, `limit`, `count`, relaciones,
+  mapas de idioma, campos heredados, acciones y esquemas.
+- **Colección**: formulario de consulta generado del descubrimiento (filtros con el control que
+  pide cada tipo y operador, claves de orden, `fields`, `include` si hay `relations`, `limit`
+  hasta `max_limit` y `count` si se declara), tabla de elementos, recuento (exacto o
+  estimado), «Página siguiente» siguiendo `next` tal cual (§5.2) y «Primera página».
+- **Elemento**: todos los campos; los mapas de idioma con todas sus traducciones y la que se
+  muestra en las tablas elegida por `Accept-Language` o el idioma del navegador, sin inventar
+  las que faltan; los campos heredados con su origen (`_inherited`, §5.7); la ETag de
+  elemento; las relaciones y subcolecciones como enlaces navegables.
+- **Escrituras**: crear (`POST` con un cuerpo de partida sacado del esquema `create`), editar
+  (`PATCH`: editas el JSON y se envía solo el merge patch mínimo, con las relaciones enteras,
+  §5.1) y borrar (con confirmación). Con el perfil `writes`, `If-Match` sale de `_etag` o de la
+  cabecera `ETag` y `Idempotency-Key` se genera sola en cada `POST`; se conserva la misma clave
+  mientras no llegue respuesta, para que un reintento tras un corte de red no duplique nada
+  (§7.1).
+- **Acciones** (§10.1): las de `_actions` del elemento si las trae (las disponibles en su
+  estado) y si no las declaradas; con su esquema `input`, método `GET` o `POST` e
+  `Idempotency-Key` en las no idempotentes.
+- **Errores**: los `problem+json` se muestran con `code`, `detail`, `parameter`, `reason`, la
+  tabla de `errors` y una explicación de qué hacer (`unsupported_parameter`: quítalo;
+  `invalid_parameter`: corrígelo; un código desconocido, según la clase del estado, §5.4).
+- **Peticiones**: las ocho últimas, cada una con su `curl` equivalente (botón de copiar), las
+  cabeceras de la respuesta que deja leer CORS y el cuerpo.
+- **Ruta libre**: una barra para ir a cualquier ruta relativa a la raíz, también a una API sin
+  documento de descubrimiento (solo `core`).
+- **Estado en la URL**: `#api=<raíz>&path=<ruta con su consulta>`, legible y compartible. Ejemplo:
+  `#api=http://localhost:8080/&path=/books?filter[price][le]=20%26sort=-price`.
+- Teclado, etiquetas en todos los controles, región `aria-live` para avisos, foco al cambiar de
+  vista, modo claro y oscuro (automático o elegido), y diseño para móvil.
+
+### Token y privacidad
+
+- El token Bearer se guarda solo en `sessionStorage` (se borra al cerrar la pestaña), con una
+  clave por origen de la API, y solo se envía a ese origen: un esquema o un enlace de otro
+  origen se pide sin él (§4.3). Así, un enlace compartido que apunte a otra API no le manda tu
+  token.
+- Nunca va en el hash ni en el `curl`, que usa `"Authorization: Bearer $RESTEP_TOKEN"`.
+- En `localStorage` solo van el tema y el `Accept-Language` elegidos.
+- La página se sirve con una CSP estricta (ver arriba; solo scripts y estilos propios, y conectar
+  por `http:` o `https:`), `referrer` desactivado y nunca usa `innerHTML`.
+- El enlace a la otra versión de idioma conserva el hash (la API y la ruta, nunca el token).
+
+## Uso
+
+```bash
+node vendor/restep-server.mjs                         # una API de prueba en :8080
+npx serve public                                          # y abre /explorer/ o /es/explorador/
+```
+
+Escribe la raíz de la API (por ejemplo `http://localhost:8080/`) y pulsa «Explorar». Si la
+página y la API están en orígenes distintos (lo normal), la API tiene que permitir CORS: ver
+abajo. El servidor de referencia no lo hace, así que para probarlo en local tienes dos
+opciones: servir ambos desde el mismo origen, o usar una copia con CORS, como hace `test.mjs`.
+
+## CORS: qué tiene que mandar la API
+
+El navegador solo deja a la página hablar con una API de otro origen si esta lo permite. Para
+el explorador, la API necesita:
+
+```
+# En toda respuesta (también en los errores):
+Access-Control-Allow-Origin: *              (o el origen del explorador)
+Access-Control-Expose-Headers: ETag, Location, Link, Allow, WWW-Authenticate, Retry-After,
+  Idempotent-Replayed, Preference-Applied, Content-Language, Deprecation, Sunset, Accept-Patch
+
+# En la respuesta a la petición previa (OPTIONS con Access-Control-Request-Method):
+Access-Control-Allow-Methods: GET, HEAD, POST, PATCH, DELETE
+Access-Control-Allow-Headers: Authorization, Content-Type, If-Match, If-None-Match,
+  Idempotency-Key, Prefer, Accept-Language
+Access-Control-Max-Age: 600
+```
+
+- Sin `ETag` en `Expose-Headers`, el explorador no puede leer la ETag de elemento: para
+  escribir con `If-Match` necesita entonces `_etag` en la representación. Lo avisa.
+- Sin `Location`, después de crear va al elemento por el `id` del cuerpo.
+- Sin `WWW-Authenticate`, no puede mostrar el reto de un `401` ni el enlace a los metadatos de
+  OAuth (§10.5 ya pide exponerla).
+- Sin `Link`, no puede seguir un `service-desc` cuando la raíz no es el documento de
+  descubrimiento.
+- `Access-Control-Allow-Headers: *` no cubre `Authorization`: hay que nombrarla.
+- Las API con `Access-Control-Allow-Origin: *` funcionan con token, porque el explorador lo
+  manda en `Authorization`, no en cookies.
+- Publicado en `https://restep.wubytes.com`, el explorador puede llamar a
+  `http://localhost:…` en Chrome y Firefox (localhost cuenta como seguro), pero Chrome puede
+  pedir también `Access-Control-Allow-Private-Network: true` en la petición previa (Private
+  Network Access). Cualquier otra API en `http:` la bloquea el navegador por contenido mixto.
+
+## Pruebas
+
+```bash
+node tools/restep-explorer/build.mjs       # desde projects/restep
+node tools/restep-explorer/test.mjs
+```
+
+Prueban la versión construida, y fallan si `public/` no está al día con la fuente.
+
+- **Lógica pura**: `explorer-i18n.js` y `explorer-logic.js` publicados se evalúan en Node (vm), en
+  inglés y en español (parseo del descubrimiento, rutas y plantillas, constructor y lector de
+  consultas, merge patch mínimo, cuerpos de partida, ETag, relaciones, traducciones, `Link`,
+  `curl`, errores y textos). El diccionario tiene las mismas claves en los dos idiomas y todas
+  las que usa el código.
+- **Páginas**: en las dos, nada en línea (ni `<script>` sin `src`, ni `<style>`, ni `style=`, ni
+  `on*=`), solo recursos propios, `lang`, título, descripción, canonical, `hreflang`, `og:*`,
+  favicon y la cabecera del sitio con su nav y el cambio de idioma; en el JS, nada de
+  `innerHTML`, `setAttribute('style')` ni `eval`.
+- **Integración**: copia el servidor de referencia a un directorio temporal, le añade CORS (el
+  original no se toca), lo arranca en `:8840` y sirve las páginas desde `public/` en `:8841`, con
+  la CSP de arriba como cabecera HTTP. Comprueba la petición previa de CORS y la lógica contra la
+  API real: consultas, paginación con `next`, errores, `PATCH` con `If-Match` (y el `412` con una
+  ETag vieja), `POST` repetido con la misma `Idempotency-Key` y `DELETE`.
+- **Navegador**: si encuentra Chrome o Chromium (o `CHROME=/ruta`), lo arranca en modo headless
+  con el protocolo de DevTools en `:8842`, carga las dos páginas (una colección filtrada, un
+  elemento con mapas de idioma y relación, un error, el tema y el enlace de idioma) y falla si
+  hay en consola alguna violación de CSP (también escucha `securitypolicyviolation`), una
+  excepción o un `console.error`. Si no lo hay, esas pruebas se omiten.
+
+## Límites
+
+- No implementa `sync` (`:changes`, avisos SSE), `batch`, `filter-expr` (un `filter=…` escrito
+  en la barra de ruta se conserva, pero no hay formulario) ni `query-method`.
+- `include` solo ofrece las relaciones de primer nivel, aunque `include_depth` permita más.
+- `fields` ofrece los campos del esquema `item` si es un objeto incrustado y, si no, los que
+  aparecen en la página actual.
+- Los esquemas se usan para el cuerpo de partida y se muestran, pero no se valida contra ellos
+  antes de enviar: la API valida y el explorador muestra su `422`.
+- Las subcolecciones solo se abren desde un elemento de su colección padre.
+- No hay `Prefer: return=minimal` ni `If-None-Match`: todas las lecturas van con
+  `cache: no-store`.
+
+## Dudas sobre la spec
+
+- **CORS para clientes de navegador.** La spec solo habla de CORS en `oauth` (exponer
+  `WWW-Authenticate`) y en 5.1 (`OPTIONS` puede responderse para CORS). Un cliente genérico de
+  navegador necesita además leer `ETag` (para `If-Match`, §7.2), `Location`, `Link`, `Allow` e
+  `Idempotent-Replayed`, y enviar `If-Match`, `Idempotency-Key` y `Prefer`. Podría valer una
+  nota no normativa con la lista de este README. Mientras tanto, `_etag` en las
+  representaciones es lo que salva las escrituras desde el navegador.
+- **Qué variable de plantilla corresponde a qué padre.** §5.1 dice que las variables de una
+  plantilla toman «por orden los `id` de los elementos padre», pero el descubrimiento no dice
+  cuál es la colección padre de `/books/{id}/reviews`. El explorador lo deduce por prefijo de
+  ruta (`/books` + `/{…}`), que falla si la subcolección cuelga de otra ruta.
+- **Relaciones a una colección con plantilla.** Un objeto de relación lleva solo `id` (y
+  `type`); si la colección de destino es una subcolección (`/books/{id}/reviews`), el cliente
+  no puede construir la ruta del elemento relacionado sin los `id` de sus padres. El
+  explorador muestra el `id` sin enlace.
+- **Lista de campos sin esquema.** Sin `schemas.item` no hay forma de saber qué campos admite
+  `fields` salvo mirando elementos; un elemento con un campo ausente lo oculta.
+- **`_actions` de una acción sin declarar.** §10.1 permite `_actions` en la representación,
+  pero no dice si una acción ahí tiene que estar también declarada en `actions` (y con qué
+  `safe` e `idempotent`). Si no lo está, el explorador la trata como no segura y no
+  idempotente, y le pone `Idempotency-Key`.
+
+## Código y avisos
+
+Código y avisos: <https://github.com/restep-spec/restep-explorer>. Ese repositorio se genera desde la web de
+Restep, donde la herramienta se desarrolla junto a la [especificación](https://restep.wubytes.com/1/) y el servidor de
+referencia: `vendor/` y `schema/` son copias de la web para que las pruebas funcionen solas.
+
+Licencia MIT.
