@@ -188,6 +188,18 @@ await test('buildQuery: filtros, orden, fields, include, limit y count (§6)', (
   assert.equal(L.withQuery('/books', ''), '/books');
 });
 
+await test('filtros con nombre: del descubrimiento a la URL y de vuelta (§6.1)', () => {
+  const disc = L.parseDiscovery({ restep: '1.0', profiles: ['core', 'query'], collections: { books: { path: '/books',
+    filter: { price: { type: 'decimal', ops: ['le'] } },
+    named_filters: { featured: { description: 'Destacados.' }, search: { type: 'string', description: 'Título.' } } } } });
+  const books = L.collection(disc, 'books');
+  same(books.named, [{ name: 'featured', type: null, values: [], description: 'Destacados.' }, { name: 'search', type: 'string', values: [], description: 'Título.' }]);
+  const q = L.parseQuery('filter[featured]=&filter[search]=niebla&filter[price][le]=15&filter[search][eq]=x', books);
+  same(q.named, { featured: '', search: 'niebla' });
+  same(q.filters, [{ field: 'price', op: 'le', value: '15' }, { field: 'search', op: 'eq', value: 'x' }]); // con operador no es el filtro con nombre
+  assert.equal(L.buildQuery({ ...L.emptyQuery(), named: { featured: '', search: 'niebla' } }), 'filter[featured]=&filter[search]=niebla');
+  same(L.parseQuery('filter[featured]=').named, {}); // sin la colección, un filtro más
+});
 await test('parseQuery: inversa de buildQuery, conserva cursor y parámetros propios', () => {
   const qs = 'filter[category]=poesia&filter[price][ge]=10&sort=-rating,title&fields=title&limit=5&count=true&cursor=c1&mio=1&filter=price%20%3C%2020';
   const q = L.parseQuery(qs);
@@ -231,6 +243,35 @@ await test('editableCopy y skeleton: sin id, _ ni heredados; obligatorios del es
   same(L.skeleton('/schemas/x.json'), {});
 });
 
+await test('formulario (§4.3): skeleton con default en orden; formFields con etiquetas y opciones; acción new', () => {
+  const schema = {
+    type: 'object', required: ['title'],
+    properties: {
+      title: { type: 'string', title: 'Título', examples: ['La niebla'] },
+      category: { title: 'Categoría', default: 'b', anyOf: [{ type: 'string', oneOf: [{ const: 'a', title: 'A' }, { const: 'b', title: 'B' }] }, { type: 'null' }] },
+      price: { type: 'string', description: 'En euros.' },
+      signed: { default: false, anyOf: [{ type: 'boolean' }, { type: 'null' }] },
+      _x: { default: 1 }, ro: { type: 'string', readOnly: true, default: 'z' },
+    },
+  };
+  const body = L.skeleton(schema);
+  same(body, { title: '', category: 'b', signed: false });
+  same(Object.keys(body), ['title', 'category', 'signed']);
+  same(L.placeholder(schema.properties.category), 'b');
+  const f = L.formFields(schema);
+  same(f.map((x) => x.name), ['title', 'category', 'price', 'signed', 'ro']);
+  same([f[0].title, f[0].required, f[0].examples], ['Título', true, ['La niebla']]);
+  same([f[1].type, f[1].nullable, f[1].hasDefault, f[1].default], ['string', true, true, 'b']);
+  same(f[1].choices, [{ value: 'a', title: 'A' }, { value: 'b', title: 'B' }]);
+  same([f[2].description, f[2].hasDefault], ['En euros.', false]);
+  same([f[3].type, f[4].readOnly], ['boolean', true]);
+  const disc = { profiles: ['core'], extensions: ['actions'] };
+  const coll = { actions: [{ name: 'new', on: 'collection', method: 'GET' }] };
+  same(L.newAction(disc, coll)?.name, 'new');
+  same(L.newAction({ profiles: ['core'], extensions: [] }, coll), null);
+  same(L.newAction(disc, { actions: [{ name: 'new', on: 'item', method: 'GET' }] }), null);
+});
+
 await test('Idempotency-Key: cadena de Structured Fields con un UUID (§7.1)', () => {
   const k = L.newIdempotencyKey();
   assert.match(k, /^"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"$/);
@@ -261,6 +302,90 @@ await test('relationLinks y subcollections (§3, §8)', () => {
   same(L.subcollections(d, noRel, [], '7').map((s) => s.path), ['/books/7/reviews']);
 });
 
+// ── Borrador 6: lo que §12.2 pide a un cliente ────────────────────────────────
+const D6 = {
+  restep: '1.0-draft.6', profiles: ['core', 'query', 'writes'], extensions: ['actions', 'inherit'], idempotency: { anonymous: false },
+  deprecations: [{ kind: 'version', announced: '2026-12-01T00:00:00Z' }, { kind: 'galaxy', announced: '2026-12-01T00:00:00Z' }],
+  collections: {
+    tags: {
+      path: '/tags', id_from: 'client',
+      filter: { geo: { type: 'geo', ops: ['eq'] }, name: { type: 'string', ops: ['near', 'eq'] } },
+      named_filters: { fuzzy: { type: 'vector' }, on: {} },
+      actions: { go: { on: 'everywhere', safe: true, idempotent: true }, put: { on: 'item', method: 'PUT', safe: false, idempotent: true }, ok: { on: 'item', safe: false, idempotent: false } },
+      inherit: { rate: { own: 'rate_own', from: ['parent'] } },
+      deprecations: [{ kind: 'field', name: 'x', announced: '2026-12-01T00:00:00Z' }, { kind: 'nebula', name: 'y', announced: '2026-12-01T00:00:00Z' }],
+    },
+    notes: { path: '/notes', id_from: 'someday' },
+    plain: { path: '/plain' },
+    reviews: { path: '/tags/{tag_id}/reviews', parent: 'tags' },
+  },
+  singletons: { me: { path: '/me', methods: ['GET', 'PATCH', 'DELETE'], description: 'Yo.' }, tpl: { path: '/u/{u}/prefs' }, sub: { path: '/x', parent: 'tags' }, bad: { path: 'nope' } },
+};
+
+await test('§1.1: versiones con sufijo; otra versión mayor o sin gramática no es Restep 1 ni core', () => {
+  for (const v of ['1.0', '1.0-draft.6', '1.0-rc.1', '1.12']) assert.ok(!L.parseDiscovery({ ...D6, restep: v }).notRestep1, v);
+  assert.ok(L.parseDiscovery(D6).draft && !L.parseDiscovery({ ...D6, restep: '1.0' }).draft);
+  for (const v of ['2.0', '0.9', '1', '1.0-beta', '01.0', '1.0-draft.06', '1.0-draft']) {
+    const d = L.parseDiscovery({ ...D6, restep: v });
+    assert.ok(d.notRestep1 && !d.coreOnly, `${v}: no es Restep 1 y no se supone core`);
+    same([d.profiles, d.collections.length, d.singletons.length], [[], 0, 0]);
+  }
+});
+
+await test('§4.2: filtros, filtros con nombre, acciones y avisos con valores desconocidos se ignoran', () => {
+  const t6 = L.collection(L.parseDiscovery(D6), 'tags');
+  same(t6.filters.map((f) => [f.field, f.ops]), [['name', ['eq']]]);
+  same(t6.named.map((f) => f.name), ['on']);
+  same(t6.actions.map((a) => a.name), ['ok']);
+  same(t6.deprecations.map((x) => x.kind), ['field']);
+  same(L.parseDiscovery(D6).deprecations.map((x) => x.kind), ['version']);
+});
+
+await test('§5.9: recursos sueltos; los de plantilla o parent se ignoran; matchPath los reconoce', () => {
+  const d = L.parseDiscovery(D6);
+  same(d.singletons.map((x) => [x.name, x.path, x.methods]), [['me', '/me', ['GET', 'PATCH']]]);
+  const m = L.matchPath(d, '/me?fields=name');
+  assert.equal(m.kind, 'singleton');
+  assert.equal(m.singleton.name, 'me');
+  assert.equal(m.query, 'fields=name');
+  assert.equal(L.matchPath(d, '/x').kind, 'unknown');
+});
+
+await test('§5.1: id_from en el alta: client lleva id aleatorio, desconocido nunca lo manda', () => {
+  const d = L.parseDiscovery(D6);
+  const schema = { type: 'object', required: ['id', 'name'], properties: { id: { type: 'string' }, name: { type: 'string' } } };
+  const tags = L.collection(d, 'tags'), notes = L.collection(d, 'notes'), plain = L.collection(d, 'plain');
+  same([tags.idFrom, notes.idFrom, plain.idFrom], ['client', 'unknown', null]);
+  assert.match(L.createSkeleton(tags, schema).id, /^[0-9a-f-]{36}$/);
+  assert.ok(!('id' in L.createSkeleton(notes, schema)) && !('id' in L.createSkeleton(plain, schema)));
+  same(L.createPayload(notes, { id: 'a', name: 'b' }), { name: 'b' });
+  same(L.createPayload(tags, { id: 'a', name: 'b' }), { id: 'a', name: 'b' });
+  same(L.createPayload(plain, { id: 'a', name: 'b' }), { id: 'a', name: 'b' }, 'sin id_from se manda lo escrito: el 422 lo explica el servidor');
+});
+
+await test('§1.2 y §11.6: inherit solo con la extensión y el texto que implementa; from desconocido es hidden', () => {
+  assert.equal(L.collection(L.parseDiscovery(D6), 'tags').inherit.length, 1);
+  assert.equal(L.collection(L.parseDiscovery({ ...D6, restep: '1.1' }), 'tags').inherit.length, 0, 'otra versión: se ignora');
+  assert.equal(L.collection(L.parseDiscovery({ ...D6, extensions: ['actions'] }), 'tags').inherit.length, 0, 'sin la extensión: se ignora');
+  same(L.parseDiscovery({ ...D6, restep: '1.0', profiles: ['core', 'query', 'sync'] }).experimentalIgnored, ['sync', 'inherit']);
+  same(L.parseDiscovery(D6).experimentalIgnored, []);
+  same(L.inheritedFrom(undefined, 'rate'), { kind: 'own' });
+  same(L.inheritedFrom({ rate: { from: 'default' } }, 'rate'), { kind: 'default' });
+  same(L.inheritedFrom({ rate: { from: { href: '/c/2' } } }, 'rate'), { kind: 'href', href: '/c/2' });
+  for (const from of ['hidden', 'upstream', { uri: 'x' }, 7]) same(L.inheritedFrom({ rate: { from } }, 'rate'), { kind: 'hidden' });
+});
+
+await test('§3: esquemas de enlace; + en la consulta como %2B; relación a una subcolección por href', () => {
+  assert.ok(L.allowedScheme('https://x.example/a', 'http://localhost:1/') && L.allowedScheme('http://localhost:2/', 'http://localhost:1/'));
+  assert.ok(!L.allowedScheme('http://x.example/', 'https://api.example/') && !L.allowedScheme('file:///etc/passwd', 'http://localhost:1/')
+    && !L.allowedScheme('data:application/json,{}', 'https://api.example/'));
+  assert.match(L.buildQuery({ ...L.emptyQuery(), filters: [{ field: 'at', op: 'ge', value: '2026-11-12T09:30:00+02:00' }] }), /2026-11-12T09%3A30%3A00%2B02%3A00/);
+  const d = L.parseDiscovery(D6);
+  const rel = { relations: [{ name: 'review', to: ['reviews'], many: false, path: null }] };
+  same(L.relationLinks(d, rel, [], { review: { id: '3', href: '/api/tags/7/reviews/3' } }, 'https://h.example/api/')[0].links.map((l) => l.path), ['/tags/7/reviews/3']);
+  same(L.relationLinks(d, rel, [], { review: { id: '3' } })[0].links.map((l) => l.path), [null]);
+});
+
 await test('pickTranslation y parseAcceptLanguage: nunca inventa traducciones (§3)', () => {
   const name = { en: 'Eraser', 'en-gb': 'Rubber', 'es-es': 'Goma de borrar', 'es-mx': 'Goma' };
   same(L.pickTranslation(name, ['es-MX']), ['es-mx', 'Goma']);
@@ -272,8 +397,8 @@ await test('pickTranslation y parseAcceptLanguage: nunca inventa traducciones (�
 });
 
 await test('parseLinks y resourceMetadata', () => {
-  const links = L.parseLinks('<https://restep.wubytes.com/1/core>; rel="profile", </disc.json>; rel="service-desc"; type="application/json", </openapi>; rel=service-desc');
-  same(links.map((l) => [l.href, l.rel, l.type]), [['https://restep.wubytes.com/1/core', ['profile'], null], ['/disc.json', ['service-desc'], 'application/json'], ['/openapi', ['service-desc'], null]]);
+  const links = L.parseLinks('<https://w3id.org/restep/1/core>; rel="profile", </disc.json>; rel="service-desc"; type="application/json", </openapi>; rel=service-desc');
+  same(links.map((l) => [l.href, l.rel, l.type]), [['https://w3id.org/restep/1/core', ['profile'], null], ['/disc.json', ['service-desc'], 'application/json'], ['/openapi', ['service-desc'], null]]);
   same(L.parseLinks(null), []);
   assert.equal(L.resourceMetadata('Bearer realm="restep", resource_metadata="http://x/.well-known/oauth-protected-resource"'), 'http://x/.well-known/oauth-protected-resource');
   assert.equal(L.resourceMetadata(null), null);
@@ -526,7 +651,9 @@ await test('descubrimiento real del servidor de referencia', async () => {
   assert.equal(r.status, 200);
   disc = L.parseDiscovery(r.json);
   assert.ok(!disc.coreOnly);
-  same(disc.collections.map((c) => c.name), ['books', 'products', 'categories']);
+  // Las colecciones se leen del descubrimiento: la referencia va creciendo (authors, reviews…).
+  same(disc.collections.map((c) => c.name), Object.keys(r.json.collections));
+  assert.ok(['books', 'products', 'categories', 'authors', 'reviews'].every((n) => L.collection(disc, n)));
   assert.ok(L.has(disc, 'query') && L.has(disc, 'writes'));
   const p = L.collection(disc, 'products');
   same(p.languageMaps, ['name', 'description']);
@@ -545,7 +672,7 @@ await test('consulta construida con buildQuery, recuento y paginación con next'
     assert.equal(r.status, 200, `GET ${path} → ${r.status} ${JSON.stringify(r.json)}`);
     total ??= r.json.total;
     seen.push(...r.json.items.map((it) => it.price));
-    for (const it of r.json.items) same(Object.keys(it).sort(), ['id', 'price', 'title']);
+    for (const it of r.json.items) same(Object.keys(it).filter((k) => !k.startsWith('_')).sort(), ['id', 'price', 'title']); // más _etag (7.2)
     path = r.json.next === null ? null : L.toApiPath(API, r.json.next);
     if (path) {
       const m = L.matchPath(disc, path);
@@ -616,6 +743,89 @@ await test('relaciones del servidor de referencia: enlaces navegables', async ()
   assert.equal(c.status, 200);
 });
 
+await test('subcolección de la referencia: reviews bajo books, 404 sin padre y borrada con él', async () => {
+  const books = L.collection(disc, 'books');
+  const [sub] = L.subcollections(disc, books, [], '7');
+  assert.equal(sub?.coll.name, 'reviews');
+  assert.equal(sub.path, '/books/7/reviews');
+  const m = L.matchPath(disc, sub.path);
+  assert.equal(m.kind, 'collection'); assert.equal(m.coll.name, 'reviews'); same(m.values, ['7']);
+  const r = await api('GET', sub.path);
+  assert.equal(r.status, 200); assert.ok(r.json.items.length >= 1);
+  const it = L.matchPath(disc, L.itemPath(m.coll, m.values, r.json.items[0].id));
+  assert.equal(it.kind, 'item'); assert.equal(it.coll.name, 'reviews');
+  assert.equal((await api('GET', L.subcollections(disc, books, [], 'no-existe')[0].path)).status, 404);
+  const b = await api('POST', '/books', { body: JSON.stringify({ title: 'Con reseña', price: '3.00', category: 'poesia' }), headers: { 'Content-Type': 'application/json' } });
+  const rpath = L.subcollections(disc, books, [], b.json.id)[0].path;
+  const rv = await api('POST', rpath, { body: JSON.stringify({ rating: 4, text: 'Corta.' }), headers: { 'Content-Type': 'application/json' } });
+  assert.equal(rv.status, 201, JSON.stringify(rv.json));
+  assert.equal((await api('DELETE', `/books/${b.json.id}`)).status, 204);
+  assert.equal((await api('GET', L.itemPath(m.coll, [b.json.id], rv.json.id))).status, 404);
+});
+
+await test('include de la referencia: profundidad 2, relación con href y polimórfica con type', async () => {
+  const products = L.collection(disc, 'products');
+  same(L.includePaths(disc, products), ['category', 'category.parent', 'category.showcase']);
+  const r = await api('GET', L.withQuery(products.path, L.buildQuery({ ...L.emptyQuery(), include: ['category.parent'] })));
+  assert.equal(r.status, 200);
+  assert.ok(r.json.items.some((p) => p.category?.parent?.name), 'category.parent incluido');
+  same(L.includePaths(disc, L.collection(disc, 'categories')), ['parent', 'showcase']); // sin include_depth: 1
+  // highlight lleva a un elemento de la subcolección reviews: se enlaza por su href (§3).
+  const books = L.collection(disc, 'books');
+  const b = await api('GET', '/books/7?include=highlight');
+  const hl = L.relationLinks(disc, books, [], b.json, API).find((x) => x.rel.name === 'highlight');
+  assert.equal(hl.links[0].path, `/books/7/reviews/${b.json.highlight.id}`);
+  const hm = L.matchPath(disc, hl.links[0].path);
+  assert.equal(hm.kind, 'item'); assert.equal(hm.coll.name, 'reviews');
+  assert.equal((await api('GET', hl.links[0].path)).json.text, b.json.highlight.text);
+  // showcase apunta a books o a products: el type elige la colección.
+  const cats = L.collection(disc, 'categories');
+  const c = await api('GET', '/categories?include=showcase');
+  const links = c.json.items.flatMap((it) => L.relationLinks(disc, cats, [], it, API).find((x) => x.rel.name === 'showcase').links);
+  assert.ok(links.length && links.every((l) => ['books', 'products'].includes(l.to) && l.path === `/${l.to}/${l.id}`), JSON.stringify(links));
+  for (const l of links) assert.equal((await api('GET', l.path)).status, 200);
+});
+
+await test('acciones de la referencia: GET de colección, POST de elemento con input, idempotentes', async () => {
+  const products = L.collection(disc, 'products');
+  const low = products.actions.find((a) => a.name === 'low_stock');
+  assert.equal(low.on, 'collection'); assert.equal(low.method, 'GET');
+  const l = await api('GET', `${products.path}:${low.name}`);
+  assert.ok(l.json.items.every((x) => x.stock < 5));
+  const restock = products.actions.find((a) => a.name === 'restock');
+  assert.equal(restock.on, 'item'); assert.equal(restock.idempotent, false); assert.ok(restock.input?.properties?.quantity);
+  same(L.skeleton(restock.input), { quantity: 0 });
+  const item = await api('GET', '/products/1');
+  const href = L.toApiPath(API, item.json._actions.restock.href);
+  const after = await api('POST', href, { body: JSON.stringify({ quantity: 2 }), headers: { 'Content-Type': 'application/json', 'Idempotency-Key': L.newIdempotencyKey() } });
+  assert.equal(after.json.stock, item.json.stock + 2);
+  const authors = L.collection(disc, 'authors');
+  const foc = authors.actions.find((a) => a.name === 'find_or_create');
+  assert.ok(foc.idempotent && foc.on === 'collection');
+  const send = () => api('POST', `${authors.path}:${foc.name}`, { body: JSON.stringify({ name: 'Autora del explorador' }), headers: { 'Content-Type': 'application/json' } });
+  const a1 = await send(), a2 = await send();
+  assert.equal(a1.status, 201); assert.equal(a2.status, 200); assert.equal(a1.json.id, a2.json.id);
+  const cat = await api('GET', '/categories/2');
+  const t = await api('POST', L.toApiPath(API, cat.json._actions.inherit_tax.href), { headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  assert.equal(t.status, 200); assert.equal(t.json.tax_rate_own, null);
+});
+
+await test('recurso suelto del servidor de referencia (/shop): GET y PATCH con If-Match', async () => {
+  assert.ok(disc.singletons.length >= 1, 'el descubrimiento de la referencia declara recursos sueltos');
+  const sg = disc.singletons[0];
+  assert.equal(L.matchPath(disc, sg.path).kind, 'singleton');
+  const r = await api('GET', sg.path);
+  assert.equal(r.status, 200);
+  const etag = L.itemEtag(r.json, r.headers.get('etag'), false);
+  const original = L.editableCopy({ schemas: sg.schemas }, r.json);
+  const diff = L.mergeDiff(original, { ...original, name: `${original.name} (prueba)` });
+  const p = await api('PATCH', sg.path, { body: JSON.stringify(diff), headers: { 'Content-Type': 'application/merge-patch+json', 'If-Match': etag } });
+  assert.equal(p.status, 200, JSON.stringify(p.json));
+  assert.match(p.json.name, /\(prueba\)$/);
+  const back = await api('PATCH', sg.path, { body: JSON.stringify({ name: original.name }), headers: { 'Content-Type': 'application/merge-patch+json' } });
+  assert.equal(back.status, 200);
+});
+
 // ── 4. Navegador real (si lo hay), por el protocolo de DevTools ───────────────
 // Carga las páginas servidas con la CSP en la cabecera y recoge todo lo que acabe en consola: avisos de
 // seguridad (CSP), excepciones y console.error. Además escucha securitypolicyviolation desde dentro.
@@ -624,7 +834,7 @@ const CHROMES = [process.env.CHROME, '/Applications/Google Chrome.app/Contents/M
 const chrome = CHROMES.find((p) => existsSync(p));
 const hashFor = (path) => L.writeHash({ api: API, path });
 const BROWSER_TESTS = ['en: colección con filtro', 'es: colección con filtro', 'en: elemento con mapas de idioma y relación', 'es: elemento con mapas de idioma y relación',
-  'en: error problem+json', 'es: error problem+json', 'en: bienvenida, tema y enlace de idioma con el hash', 'ninguna violación de CSP ni error de JS en consola'];
+  'en: error problem+json', 'es: error problem+json', 'en: recurso suelto', 'es: recurso suelto', 'en: bienvenida, tema y enlace de idioma con el hash', 'ninguna violación de CSP ni error de JS en consola'];
 
 async function startChrome() {
   const profile = mkdtempSync(join(dir, 'chrome-'));
@@ -736,6 +946,19 @@ if (!chrome) {
     assert.match(dom, /Lapicera/);
     assert.match(dom, /href="#api=http:\/\/localhost:8840\/&amp;path=\/categories\/1"/);
     assert.match(dom, /Borrar \(DELETE\)/);
+  });
+  await bt('en: recurso suelto', async () => {
+    const dom = await open(EN_PAGE + hashFor('/shop'), /Edit \(PATCH\)/);
+    assert.match(dom, /Singleton · \/shop/);
+    assert.match(dom, /max_reservations/);
+    assert.match(dom, /If-Match: <code>/);
+    const home = await open(EN_PAGE + hashFor('/'), /Singletons \(1\)/);
+    assert.match(home, /href="#api=http:\/\/localhost:8840\/&amp;path=\/shop"/);
+    assert.match(home, /1\.0-draft\.6" is a draft/);
+  });
+  await bt('es: recurso suelto', async () => {
+    const dom = await open(ES_PAGE + hashFor('/shop'), /Editar \(PATCH\)/);
+    assert.match(dom, /Recurso suelto · \/shop/);
   });
   await bt('en: error problem+json', async () => {
     const dom = await open(EN_PAGE + hashFor('/books?sort=category'), /unsupported_parameter/);

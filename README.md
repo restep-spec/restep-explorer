@@ -46,14 +46,15 @@ rutas necesitan la suya. `connect-src http: https:` es lo que permite hablar con
 - **Resumen de la API**: versión de Restep y de la API, perfiles, extensiones, retiradas
   anunciadas (§5.5), botón para consultar el recurso de estado (§4.4) y, por colección, ruta,
   descripción, métodos, filtros con su tipo y operadores, orden, `limit`, `count`, relaciones,
-  mapas de idioma, campos heredados, acciones y esquemas.
+  mapas de idioma, campos heredados, acciones y esquemas; y cada recurso suelto (§5.9).
 - **Colección**: formulario de consulta generado del descubrimiento (filtros con el control que
-  pide cada tipo y operador, claves de orden, `fields`, `include` si hay `relations`, `limit`
+  pide cada tipo y operador, claves de orden, `fields`, `include` si hay `relations` (con las rutas hasta
+  `include_depth`, como `category.parent`; una relación a varias colecciones solo al final), `limit`
   hasta `max_limit` y `count` si se declara), tabla de elementos, recuento (exacto o
   estimado), «Página siguiente» siguiendo `next` tal cual (§5.2) y «Primera página».
 - **Elemento**: todos los campos; los mapas de idioma con todas sus traducciones y la que se
   muestra en las tablas elegida por `Accept-Language` o el idioma del navegador, sin inventar
-  las que faltan; los campos heredados con su origen (`_inherited`, §5.7); la ETag de
+  las que faltan; los campos heredados con su origen (`_inherited`, §11.6); la ETag de
   elemento; las relaciones y subcolecciones como enlaces navegables.
 - **Escrituras**: crear (`POST` con un cuerpo de partida sacado del esquema `create`), editar
   (`PATCH`: editas el JSON y se envía solo el merge patch mínimo, con las relaciones enteras,
@@ -61,7 +62,10 @@ rutas necesitan la suya. `connect-src http: https:` es lo que permite hablar con
   cabecera `ETag` y `Idempotency-Key` se genera sola en cada `POST`; se conserva la misma clave
   mientras no llegue respuesta, para que un reintento tras un corte de red no duplique nada
   (§7.1).
-- **Acciones** (§10.1): las de `_actions` del elemento si las trae (las disponibles en su
+- **Recurso suelto** (§5.9): cada uno de `singletons` tiene su enlace en la barra lateral y su
+  vista, con sus campos, su ETag y, si `methods` incluye `PATCH` o no se declara, «Editar»
+  (merge patch mínimo con `If-Match`).
+- **Acciones** (§11.1): las de `_actions` del elemento si las trae (las disponibles en su
   estado) y si no las declaradas; con su esquema `input`, método `GET` o `POST` e
   `Idempotency-Key` en las no idempotentes.
 - **Errores**: los `problem+json` se muestran con `code`, `detail`, `parameter`, `reason`, la
@@ -75,6 +79,31 @@ rutas necesitan la suya. `connect-src http: https:` es lo que permite hablar con
   `#api=http://localhost:8080/&path=/books?filter[price][le]=20%26sort=-price`.
 - Teclado, etiquetas en todos los controles, región `aria-live` para avisos, foco al cambiar de
   vista, modo claro y oscuro (automático o elegido), y diseño para móvil.
+
+### Lo que entiende del borrador 6 (§12.2)
+
+- **Versión** (§1.1): `restep` tiene que seguir la gramática (`1.0`, `1.0-draft.6`, `1.0-rc.1`…)
+  con versión mayor 1. Si no, el resumen dice que no es Restep 1 y no ofrece nada más (tampoco
+  supone solo `core`). Con sufijo, avisa de que es un borrador o un candidato.
+- **Partes experimentales** (§1.2): el explorador implementa el texto de `inherit` del borrador 6
+  y solo lo usa (campo efectivo de solo lectura en la edición, origen de `_inherited`) si la API
+  anuncia la extensión `inherit` y declara exactamente `"restep": "1.0-draft.6"`. Con otra
+  versión ignora esos miembros y lo dice en el resumen. De `sync` y `batch` solo muestra lo que
+  declaran, sin usarlos.
+- **Valores desconocidos** (§4.2): un filtro con un `type` desconocido no se ofrece, de un filtro
+  solo se ofrecen los operadores conocidos, un filtro con nombre con un `type` desconocido no
+  se ofrece, una acción con un `on` o un `method` desconocidos (también en `_actions`) no se
+  ofrece, y un aviso de retirada con un `kind` que no corresponde a su sitio no se muestra. Un
+  `from` desconocido en `_inherited` se muestra como de una fuente que no se ve («hidden», §11.6).
+- **`id_from`** (§5.1): con `"client"` el cuerpo de partida del alta lleva un `id` aleatorio; con
+  un valor desconocido el `id` se quita siempre antes de enviar; sin `id_from` o con `"server"`
+  se envía lo que escribas (y el servidor responde `422` si pones un `id`).
+- **Recursos sueltos con plantilla o `parent`** (§5.9): se ignoran.
+- **Enlaces** (§3): no pide ninguna URL cuyo esquema no sea `https` ni el de la raíz; las
+  relaciones que traen `href` (obligatorio hacia una subcolección) se enlazan por él.
+- **`idempotency.anonymous: false`** (§7.1): sin token, los `POST` no llevan `Idempotency-Key`.
+- Los `POST` (alta y acciones, también con cuerpo `{}`) van con `Content-Type: application/json`
+  y un `+` literal en la consulta sale como `%2B` (§3, §5.2).
 
 ### Token y privacidad
 
@@ -122,7 +151,7 @@ Access-Control-Max-Age: 600
   escribir con `If-Match` necesita entonces `_etag` en la representación. Lo avisa.
 - Sin `Location`, después de crear va al elemento por el `id` del cuerpo.
 - Sin `WWW-Authenticate`, no puede mostrar el reto de un `401` ni el enlace a los metadatos de
-  OAuth (§10.5 ya pide exponerla).
+  OAuth (§11.5 ya pide exponerla).
 - Sin `Link`, no puede seguir un `service-desc` cuando la raíz no es el documento de
   descubrimiento.
 - `Access-Control-Allow-Headers: *` no cubre `Authorization`: hay que nombrarla.
@@ -155,10 +184,15 @@ Prueban la versión construida, y fallan si `public/` no está al día con la fu
   original no se toca), lo arranca en `:8840` y sirve las páginas desde `public/` en `:8841`, con
   la CSP de arriba como cabecera HTTP. Comprueba la petición previa de CORS y la lógica contra la
   API real: consultas, paginación con `next`, errores, `PATCH` con `If-Match` (y el `412` con una
-  ETag vieja), `POST` repetido con la misma `Idempotency-Key` y `DELETE`.
+  ETag vieja), `POST` repetido con la misma `Idempotency-Key`, `DELETE`, el `PATCH` del recurso
+  suelto `/shop`, la subcolección `reviews` desde su libro (404 sin él, borrada con él), `include`
+  con profundidad 2, la relación `highlight` enlazada por su `href`, la polimórfica `showcase`
+  por su `type`, y las acciones `low_stock` (`GET` de colección), `restock` (`POST` de elemento
+  con `input`, por el `href` de `_actions`), `find_or_create` e `inherit_tax` (idempotentes).
 - **Navegador**: si encuentra Chrome o Chromium (o `CHROME=/ruta`), lo arranca en modo headless
   con el protocolo de DevTools en `:8842`, carga las dos páginas (una colección filtrada, un
-  elemento con mapas de idioma y relación, un error, el tema y el enlace de idioma) y falla si
+  elemento con mapas de idioma y relación, el recurso suelto `/shop`, un error, el tema y el
+  enlace de idioma) y falla si
   hay en consola alguna violación de CSP (también escucha `securitypolicyviolation`), una
   excepción o un `console.error`. Si no lo hay, esas pruebas se omiten.
 
@@ -166,37 +200,37 @@ Prueban la versión construida, y fallan si `public/` no está al día con la fu
 
 - No implementa `sync` (`:changes`, avisos SSE), `batch`, `filter-expr` (un `filter=…` escrito
   en la barra de ruta se conserva, pero no hay formulario) ni `query-method`.
-- `include` solo ofrece las relaciones de primer nivel, aunque `include_depth` permita más.
 - `fields` ofrece los campos del esquema `item` si es un objeto incrustado y, si no, los que
   aparecen en la página actual.
 - Los esquemas se usan para el cuerpo de partida y se muestran, pero no se valida contra ellos
   antes de enviar: la API valida y el explorador muestra su `422`.
-- Las subcolecciones solo se abren desde un elemento de su colección padre.
+- Las subcolecciones solo se abren desde un elemento de su colección padre, que se busca por
+  prefijo de ruta, no por `parent` (§4.2).
+- No muestra `id_from`, `collations` ni `parent` en las fichas de colección, ni anota con
+  `Deprecation` las respuestas que lo traen (solo salen en el registro de cabeceras).
+- En un recurso suelto no hay formulario de `fields` (§5.9), y sus relaciones se muestran como
+  JSON, sin enlazar su `href`.
+- No revalida el descubrimiento según su `Cache-Control` (§4.2): lo vuelve a leer al cambiar de
+  API, al guardar el token o el idioma y con «Recargar».
 - No hay `Prefer: return=minimal` ni `If-None-Match`: todas las lecturas van con
   `cache: no-store`.
 
 ## Dudas sobre la spec
 
-- **CORS para clientes de navegador.** La spec solo habla de CORS en `oauth` (exponer
-  `WWW-Authenticate`) y en 5.1 (`OPTIONS` puede responderse para CORS). Un cliente genérico de
-  navegador necesita además leer `ETag` (para `If-Match`, §7.2), `Location`, `Link`, `Allow` e
-  `Idempotent-Replayed`, y enviar `If-Match`, `Idempotency-Key` y `Prefer`. Podría valer una
-  nota no normativa con la lista de este README. Mientras tanto, `_etag` en las
-  representaciones es lo que salva las escrituras desde el navegador.
-- **Qué variable de plantilla corresponde a qué padre.** §5.1 dice que las variables de una
-  plantilla toman «por orden los `id` de los elementos padre», pero el descubrimiento no dice
-  cuál es la colección padre de `/books/{id}/reviews`. El explorador lo deduce por prefijo de
-  ruta (`/books` + `/{…}`), que falla si la subcolección cuelga de otra ruta.
-- **Relaciones a una colección con plantilla.** Un objeto de relación lleva solo `id` (y
-  `type`); si la colección de destino es una subcolección (`/books/{id}/reviews`), el cliente
-  no puede construir la ruta del elemento relacionado sin los `id` de sus padres. El
-  explorador muestra el `id` sin enlace.
+- **CORS para clientes de navegador.** Resuelto en §5.8 del borrador 5: cabeceras expuestas, preflight y `Vary: Origin`. La configuración de la API sigue siendo necesaria.
+- **Qué variable de plantilla corresponde a qué padre.** Resuelto en el borrador 6: la
+  subcolección declara `parent` y su ruta empieza por la del padre (§4.2).
+- **Relaciones a una colección con plantilla.** Resuelto en el borrador 6: el objeto de relación
+  lleva `href` (§3), y el explorador lo enlaza por él.
 - **Lista de campos sin esquema.** Sin `schemas.item` no hay forma de saber qué campos admite
   `fields` salvo mirando elementos; un elemento con un campo ausente lo oculta.
-- **`_actions` de una acción sin declarar.** §10.1 permite `_actions` en la representación,
-  pero no dice si una acción ahí tiene que estar también declarada en `actions` (y con qué
-  `safe` e `idempotent`). Si no lo está, el explorador la trata como no segura y no
-  idempotente, y le pone `Idempotency-Key`.
+- **`_actions` de una acción sin declarar.** Resuelto en el borrador 6: `_actions` solo lista
+  acciones declaradas, con su método (§11.1). Si un servidor lista otra, el explorador la sigue
+  tratando como no segura y no idempotente, y le pone `Idempotency-Key`.
+- **Qué texto de una parte experimental implementa un cliente para `"1.0"`.** §1.2 pide que el
+  cliente implemente «el texto de la versión que declara el servidor». El explorador solo
+  conoce el del borrador 6; no puede saber si la 1.0 publicada lo mantendrá, así que con
+  `"1.0"` ignora `inherit` (el comprobador, en cambio, acepta `1.0-draft.6` y `1.0`).
 
 ## Código y avisos
 

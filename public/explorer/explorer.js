@@ -69,6 +69,8 @@
     const token = getToken();
     if (token && L.sameOrigin(url, state.root)) sent.Authorization = `Bearer ${token}`;
     const entry = { method, url, sent, body, at: new Date() };
+    // §3: no se sigue un enlace cuyo esquema no es https ni el de la raíz.
+    if (!L.allowedScheme(url, state.root)) { entry.networkError = t('errLinkScheme', url); entry.ms = 0; addLog(entry); return entry; }
     const t0 = performance.now();
     try {
       const res = await fetch(url, { method, headers: sent, body, cache: 'no-store', redirect: 'follow' });
@@ -208,7 +210,10 @@
       if (c.templated) items.push(h('li', null, h('span', { class: 't', title: t('subTitle') }, inner, h('small', null, t('subSmall')))));
       else items.push(h('li', null, navLink(c.path, inner, { 'aria-current': current === c.name ? 'page' : null })));
     }
-    side.replaceChildren(h('h2', { id: 'side-h' }, t('collections')), h('ul', null, items));
+    const sgs = state.disc?.singletons ?? [];
+    const sgList = sgs.length ? [h('h2', { id: 'side-s' }, t('singletons')), h('ul', null, sgs.map((sg) => h('li', null,
+      navLink(sg.path, [sg.name, h('small', { text: sg.path })], { 'aria-current': current === `singleton:${sg.name}` ? 'page' : null }))))] : [];
+    side.replaceChildren(h('h2', { id: 'side-h' }, t('collections')), h('ul', null, items), ...sgList);
   }
 
   // ── Vistas ──────────────────────────────────────────────────────────────────
@@ -238,8 +243,13 @@
       if (e.status === 401) parts.push(h('p', { class: 'note' }, t('needsToken')));
     } else if (d.coreOnly) {
       parts.push(h('p', { class: 'note' }, t('coreOnly')));
+    } else if (d.notRestep1) {
+      parts.push(h('p', { class: 'note' }, t('notRestep1', String(d.restep))));
+      parts.push(h('details', { class: 'box ink' }, h('summary', null, t('fullDiscovery')), h('pre', { tabindex: '0' }, h('code', { text: JSON.stringify(d.raw, null, 2) }))));
     }
-    if (!d.coreOnly) {
+    if (!d.coreOnly && !d.notRestep1) {
+      if (d.draft) parts.push(h('p', { class: 'note' }, t('draftNote', d.restep)));
+      if (d.experimentalIgnored.length) parts.push(h('p', { class: 'note' }, t('experimentalOff', d.experimentalIgnored.join(', '), d.restep)));
       const dl = h('dl', { class: 'kv' });
       const add = (k, v) => { if (v !== null && v !== undefined && v !== '') dl.append(h('dt', { text: k }), h('dd', null, v)); };
       add('Restep', code(d.restep));
@@ -263,6 +273,10 @@
       if (d.deprecations.length) parts.push(deprecationsBox(d.deprecations));
       parts.push(h('h3', null, `${t('collections')} (${d.collections.length})`));
       parts.push(h('div', { class: 'cards' }, d.collections.map(collectionCard)));
+      if (d.singletons.length) {
+        parts.push(h('h3', null, `${t('singletons')} (${d.singletons.length})`));
+        parts.push(h('div', { class: 'cards' }, d.singletons.map(singletonCard)));
+      }
       parts.push(h('details', { class: 'box ink' }, h('summary', null, t('fullDiscovery')), h('pre', { tabindex: '0' }, h('code', { text: JSON.stringify(d.raw, null, 2) }))));
     }
     view(parts);
@@ -270,7 +284,14 @@
   const fmtSeconds = (s) => (s % 86400 === 0 ? t('days', s / 86400) : s % 3600 === 0 ? `${s / 3600} h` : `${s} s`);
   function deprecationsBox(list) {
     return h('div', { class: 'note' }, h('strong', null, t('deprecations')),
-      h('ul', null, list.map((x) => h('li', null, `${x.kind ?? '?'}${x.name ? ` ${x.name}` : ''}${x.sunset ? t('sunsetOn', x.sunset) : ''}`))));
+      h('ul', null, list.map((x) => h('li', null, `${x.kind ?? '?'}${x.name ? ` ${x.name}` : ''}${x.op ? ` ${x.op}` : ''}${x.value !== undefined ? ` ${x.value}` : ''}${typeof x.announced === 'string' ? t('announcedOn', x.announced) : ''}${x.sunset ? t('sunsetOn', x.sunset) : ''}`))));
+  }
+  function singletonCard(sg) {
+    const b = sg.methods ? h('div', { class: 'badges', 'aria-label': t('declaredMethods') }, sg.methods.map((m) => badge(m, 'm'))) : null;
+    const dl = h('dl', { class: 'kv' });
+    if (Object.keys(sg.schemas).length) dl.append(h('dt', { text: t('schemas') }), h('dd', null, Object.keys(sg.schemas).map((k) => code(k)).flatMap((x, i) => (i ? [', ', x] : [x]))));
+    return h('article', { class: 'card ink' }, h('h3', null, navLink(sg.path, sg.name)), h('p', null, code(sg.path)),
+      sg.description ? h('p', { text: sg.description }) : null, b, dl, sg.deprecations.length ? deprecationsBox(sg.deprecations) : null);
   }
   function methodBadges(c) {
     const b = [];
@@ -293,7 +314,7 @@
     if (c.sync) add('sync', c.sync.retention ? t('changesKept', fmtSeconds(c.sync.retention)) : t('yes'));
     return h('article', { class: 'card ink' },
       h('h3', null, title), h('p', null, code(c.path)), c.description ? h('p', { text: c.description }) : null,
-      methodBadges(c), c.filters.length ? filtersTable(c) : null, dl,
+      methodBadges(c), c.filters.length ? filtersTable(c) : null, c.named.length ? namedTable(c) : null, dl,
       c.deprecations.length ? deprecationsBox(c.deprecations) : null);
   }
   function filtersTable(c) {
@@ -304,6 +325,36 @@
         h('th', { scope: 'row' }, code(f.field), f.description ? h('div', { class: 'mute', text: f.description }) : null),
         h('td', null, f.type, f.values.length ? h('div', { class: 'mute', text: f.values.join(', ') }) : null),
         h('td', null, f.ops.join(' ')))))));
+  }
+
+  function namedTable(c) {
+    return h('div', { class: 'tbl', tabindex: '0', role: 'region', 'aria-label': t('namedOf', c.name) }, h('table', null,
+      h('caption', { class: 'sr' }, t('namedOf', c.name)),
+      h('thead', null, h('tr', null, [t('namedFilter'), t('value'), t('description')].map((x) => h('th', { scope: 'col' }, x)))),
+      h('tbody', null, c.named.map((f) => h('tr', null,
+        h('th', { scope: 'row' }, code(f.name)),
+        h('td', null, f.type ?? t('switchNoValue'), f.values.length ? h('div', { class: 'mute', text: f.values.join(', ') }) : null),
+        h('td', { text: f.description }))))));
+  }
+
+  // Los campos del alta tal como los describe el esquema create (§4.3), en su orden: etiqueta, ayuda,
+  // tipo, opciones, default y ejemplos. Lo que un formulario de verdad pintaría como controles.
+  function formFieldsTable(coll, fields) {
+    const json = (v) => JSON.stringify(v);
+    return h('div', { class: 'tbl', tabindex: '0', role: 'region', 'aria-label': t('formFieldsOf', coll.name) }, h('table', null,
+      h('caption', { class: 'sr' }, t('formFieldsOf', coll.name)),
+      h('thead', null, h('tr', null, [t('formField'), t('type'), t('formValues')].map((x) => h('th', { scope: 'col' }, x)))),
+      h('tbody', null, fields.map((f) => h('tr', null,
+        h('th', { scope: 'row' }, f.title ? h('div', { text: f.title }) : null, code(f.name),
+          f.required ? h('span', { class: 'mute', text: ` · ${t('formRequired')}` }) : null,
+          f.readOnly ? h('span', { class: 'mute', text: ` · ${t('formReadOnly')}` }) : null,
+          f.description ? h('div', { class: 'mute', text: f.description }) : null),
+        h('td', null, [f.type, f.format].filter(Boolean).join(' · ') || '—', f.nullable ? h('span', { class: 'mute', text: ' | null' }) : null),
+        h('td', null,
+          f.choices.length ? h('div', { text: f.choices.map((c) => (c.title ? `${c.title} (${json(c.value)})` : json(c.value))).join(', ') }) : null,
+          f.hasDefault ? h('div', { class: 'mute', text: t('formDefault', json(f.default)) }) : null,
+          f.examples.length ? h('div', { class: 'mute', text: t('formExamples', f.examples.map(json).join(', ')) }) : null,
+          !f.choices.length && !f.hasDefault && !f.examples.length ? '—' : null))))));
   }
 
   // ── Valores ─────────────────────────────────────────────────────────────────
@@ -318,7 +369,7 @@
     }
     const rel = coll?.relations.find((r) => r.name === field);
     if (rel && !rel.path && (isObj(v) || Array.isArray(v))) {
-      const [info] = L.relationLinks(state.disc, { relations: [rel] }, values, { [field]: v });
+      const [info] = L.relationLinks(state.disc, { relations: [rel] }, values, { [field]: v }, state.root);
       if (info.links.length) return h('span', null, info.links.map((l, i) => [i ? ', ' : '', l.path ? navLink(l.path, `${l.to}/${l.id}`) : code(`${l.to}/${l.id}`)]));
     }
     if (typeof v === 'string') return compact && v.length > 120 ? h('span', { title: v }, `${v.slice(0, 117)}…`) : h('span', { text: v });
@@ -336,7 +387,7 @@
     const e = await request('GET', path);
     if (id !== state.routeId) return;
     setStatus('');
-    const q = L.parseQuery(m.query);
+    const q = L.parseQuery(m.query, coll);
     const parts = [...header(coll.name, t('collectionKicker', m.pathname))];
     if (state.pendingNote) { parts.push(h('p', { class: 'okmsg', role: 'status' }, state.pendingNote)); state.pendingNote = null; }
     if (coll.description) parts.push(h('p', { text: coll.description }));
@@ -404,6 +455,29 @@
       form.append(h('fieldset', null, h('legend', null, t('filtersLegend')), fRows,
         h('button', { type: 'button', class: 'btn small', onclick: () => { addFilter(null); fRows.lastElementChild.querySelector('select').focus(); } }, icon('plus'), t('addFilter'))));
     } else form.append(h('p', { class: 'hint' }, t('noFilters')));
+    // Filtros con nombre (§6.1): un interruptor es una casilla; uno con type, un valor de su tipo.
+    const namedRows = [];
+    if (coll.named.length) {
+      const box = h('div', { class: 'named' });
+      for (const f of coll.named) {
+        const id = nextId('nf'), hid = nextId('nh');
+        const on = Object.hasOwn(q.named, f.name);
+        if (!f.type) {
+          const el = h('input', { id, type: 'checkbox', checked: on, 'aria-describedby': f.description ? hid : null });
+          namedRows.push(() => [f.name, el.checked ? '' : null]);
+          box.append(h('div', { class: 'checks' }, h('label', { for: id }, el, code(f.name))), f.description ? h('p', { class: 'hint', id: hid, text: f.description }) : null);
+        } else {
+          const c = L.valueControl(f, 'eq');
+          const el = c.kind === 'select'
+            ? h('select', { id, 'aria-describedby': f.description ? hid : null }, h('option', { value: '' }, t('notApplied')), c.options.map(([v, label]) => h('option', { value: v }, label)))
+            : h('input', { id, type: c.type, inputmode: c.inputmode, placeholder: c.placeholder, spellcheck: 'false', autocomplete: 'off', 'aria-describedby': f.description ? hid : null });
+          el.value = on ? q.named[f.name] : '';
+          namedRows.push(() => [f.name, el.value === '' ? null : el.value]);
+          box.append(h('div', null, h('label', { for: id }, code(f.name), ` · ${f.type}`), el), f.description ? h('p', { class: 'hint', id: hid, text: f.description }) : null);
+        }
+      }
+      form.append(h('fieldset', null, h('legend', null, t('namedLegend')), box));
+    }
     // Orden (§6.2)
     const sRows = h('div');
     const addSort = (s) => sRows.append(sortRow(coll, s));
@@ -424,11 +498,11 @@
       form.append(h('fieldset', null, h('legend', null, t('fieldsLegend')),
         h('div', { class: 'checks' }, fieldNames.map((f) => h('label', null, h('input', { type: 'checkbox', name: 'fields', value: f, checked: q.fields.includes(f) }), f)))));
     }
-    // include (§8)
-    const incl = coll.relations.filter((r) => r.include);
+    // include (§9): las relaciones incluibles y, hasta include_depth, las de sus destinos (category.parent).
+    const incl = L.includePaths(state.disc, coll);
     if (L.has(state.disc, 'relations') && incl.length) {
       form.append(h('fieldset', null, h('legend', null, t('includeLegend')),
-        h('div', { class: 'checks' }, incl.map((r) => h('label', null, h('input', { type: 'checkbox', name: 'include', value: r.name, checked: q.include.includes(r.name) }), r.name)))));
+        h('div', { class: 'checks' }, incl.map((p) => h('label', null, h('input', { type: 'checkbox', name: 'include', value: p, checked: q.include.includes(p) }), p)))));
     }
     // limit y count (§6.4, §6.5)
     const limId = nextId('limit'), cntId = nextId('count');
@@ -441,6 +515,7 @@
       const nq = L.emptyQuery();
       nq.extra = q.extra;
       for (const r of fRows.children) nq.filters.push(r.readFilter());
+      for (const read of namedRows) { const [name, v] = read(); if (v !== null) nq.named[name] = v; }
       for (const r of sRows.children) nq.sort.push(r.readSort());
       nq.fields = [...form.querySelectorAll('input[name=fields]:checked')].map((x) => x.value);
       nq.include = [...form.querySelectorAll('input[name=include]:checked')].map((x) => x.value);
@@ -587,11 +662,23 @@
       const loading = h('p', { class: 'mute' }, t('preparingForm'));
       box.append(loading);
       const schema = await resolveSchema(coll.schemas.create);
+      // §4.3: el cuerpo empieza con los obligatorios y los default; con la acción new (§12), con lo que
+      // devuelva GET colección:new para este cliente y este momento.
+      let initial = L.createSkeleton(coll, schema), from = null;
+      const act = L.newAction(state.disc, coll);
+      if (act) {
+        const path = `${m.pathname}:${act.name}`;
+        const r = await request('GET', path);
+        from = r.ok && isObj(r.json) ? t('newFilled', path) : t('newFailed', path, r.networkError ? '—' : String(r.status));
+        if (r.ok && isObj(r.json)) initial = { ...initial, ...r.json };
+      }
       loading.remove();
+      const fields = L.formFields(schema);
+      if (fields.length) box.append(formFieldsTable(coll, fields));
       box.append(jsonForm({
-        intro: t('createIntro', m.pathname, !!schema),
-        initial: L.skeleton(schema), schema, method: 'POST', idempotency: writes, submitLabel: t('create'), submitIcon: 'plus',
-        makeRequest: (body) => ({ path: m.pathname, body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
+        intro: [t('createIntro', m.pathname, !!schema), coll.idFrom === 'client' ? t('idFromClient') : coll.idFrom === 'either' ? t('idFromEither') : coll.idFrom === 'unknown' ? t('idFromUnknown') : t('idFromServer'), from].filter(Boolean).join(' '),
+        initial, schema, method: 'POST', idempotency: writes && (state.disc.idempotencyAnonymous || !!getToken()), submitLabel: t('create'), submitIcon: 'plus',
+        makeRequest: (body) => ({ path: m.pathname, body: JSON.stringify(L.createPayload(coll, body)), headers: { 'Content-Type': 'application/json' } }),
         onDone: (r) => {
           const loc = hdr(r, 'location');
           const p = (loc && L.toApiPath(state.root, loc, r.responseUrl)) || (isObj(r.json) && typeof r.json.id === 'string' ? L.itemPath(coll, m.values, r.json.id) : null);
@@ -602,7 +689,7 @@
     return box;
   }
 
-  // ── Acciones (§10.1) ────────────────────────────────────────────────────────
+  // ── Acciones (§11.1) ────────────────────────────────────────────────────────
   function actionsBox(coll, acts, onItem, reload) {
     const writes = L.has(state.disc, 'writes');
     const sec = h('section', { class: 'panel ink', 'aria-labelledby': 'act-h' }, h('h3', { id: 'act-h', class: 'mt0' }, t('actions')));
@@ -614,7 +701,7 @@
         const schema = a.method === 'POST' ? await resolveSchema(a.input) : null;
         art.append(jsonForm({
           intro: `${a.method} ${a.href}`, initial: schema ? L.skeleton(schema) : {}, schema, method: a.method, noBody: a.method === 'GET',
-          idempotency: writes && a.method === 'POST' && !a.idempotent, submitLabel: t('run'), submitIcon: 'bolt',
+          idempotency: writes && a.method === 'POST' && !a.idempotent && (state.disc.idempotencyAnonymous || !!getToken()), submitLabel: t('run'), submitIcon: 'bolt',
           makeRequest: (body) => ({ path: a.href, body: a.method === 'GET' ? undefined : JSON.stringify(body), headers: a.method === 'GET' ? {} : { 'Content-Type': 'application/json' } }),
           onDone: (r) => {
             const loc = r.status === 201 ? hdr(r, 'location') : null;
@@ -654,18 +741,18 @@
       const dd = h('dd', null, renderValue(v, k, coll, m.values, false));
       const inh = coll.inherit.find((i) => i.field === k);
       if (inh) {
-        const why = isObj(item._inherited) ? item._inherited[k] : undefined;
-        const from = isObj(why) ? why.from : undefined;
-        const p = isObj(from) && typeof from.href === 'string' ? L.toApiPath(state.root, from.href, e.responseUrl) : null;
+        const src = L.inheritedFrom(item._inherited, k);
+        const p = src.kind === 'href' ? L.toApiPath(state.root, src.href, e.responseUrl) : null;
         dd.append(h('div', { class: 'hint' }, t('effective1'), code(inh.own), '. ',
-          from === 'default' ? t('fromDefault') : p ? h('span', null, t('inheritedFrom'), navLink(p, p), '.') : why === undefined ? t('ownValue') : ''));
+          src.kind === 'default' ? t('fromDefault') : src.kind === 'own' ? t('ownValue') : p ? h('span', null, t('inheritedFrom'), navLink(p, p), '.')
+            : src.kind === 'href' ? h('span', null, t('inheritedFrom'), code(src.href), '.') : t('fromHidden')));
       }
       dl.append(h('dt', { text: k }), dd);
     }
     parts.push(h('section', { class: 'panel ink', 'aria-label': t('fields') }, dl,
       h('p', { class: 'hint' }, t('itemEtag'), etag ? code(etag) : t('etagUnavailable'))));
-    // Relaciones y subcolecciones (§8)
-    const rels = L.relationLinks(state.disc, coll, m.values, item);
+    // Relaciones y subcolecciones (§9)
+    const rels = L.relationLinks(state.disc, coll, m.values, item, state.root);
     const subs = L.subcollections(state.disc, coll, m.values, m.id);
     if (rels.length || subs.length) {
       const ul = h('ul');
@@ -681,7 +768,8 @@
     if (L.has(state.disc, 'actions') || isObj(item._actions)) {
       let acts;
       if (isObj(item._actions)) {
-        acts = Object.entries(item._actions).filter(([, a]) => isObj(a) && typeof a.href === 'string').map(([name, a]) => {
+        // §11.1: un method desconocido en _actions: la acción no se ofrece.
+        acts = Object.entries(item._actions).filter(([, a]) => isObj(a) && typeof a.href === 'string' && [undefined, 'GET', 'POST'].includes(a.method)).map(([name, a]) => {
           const decl = coll.actions.find((x) => x.name === name) ?? { name, on: 'item', safe: false, idempotent: false, description: '', input: null };
           return { ...decl, name, method: a.method === 'GET' ? 'GET' : 'POST', href: L.toApiPath(state.root, a.href, e.responseUrl) ?? a.href };
         });
@@ -713,6 +801,45 @@
         onDone: () => { state.pendingNote = t('deleted', m.pathname); go(collPath); },
       });
       parts.push(h('details', { class: 'box ink' }, h('summary', null, t('deleteBox')), form));
+    }
+    view(parts);
+  }
+
+  // ── Recurso suelto (§5.9): se lee y, si admite PATCH, se edita con Merge Patch e If-Match ──
+  async function renderSingleton(m, path, id) {
+    const sg = m.singleton;
+    renderSide(`singleton:${sg.name}`);
+    setStatus(t('loading', m.pathname));
+    const e = await request('GET', path);
+    if (id !== state.routeId) return;
+    setStatus('');
+    const parts = [...header(sg.name, t('singletonKicker', m.pathname))];
+    if (state.pendingNote) { parts.push(h('p', { class: 'okmsg', role: 'status' }, state.pendingNote)); state.pendingNote = null; }
+    if (sg.description) parts.push(h('p', { text: sg.description }));
+    if (sg.methods) parts.push(h('div', { class: 'badges', 'aria-label': t('declaredMethods') }, sg.methods.map((x) => badge(x, 'm'))));
+    if (sg.deprecations.length) parts.push(deprecationsBox(sg.deprecations));
+    if (!e.ok) { parts.push(problemBox(e)); view(parts); return; }
+    const item = e.json;
+    if (!isObj(item)) { parts.push(h('p', { class: 'note' }, t('notObject')), h('pre', null, h('code', { text: pretty(e) }))); view(parts); return; }
+    const partial = /(^|&)fields=/.test(m.query);
+    const etag = L.itemEtag(item, hdr(e, 'etag'), partial);
+    const dl = h('dl', { class: 'kv' });
+    for (const [k, v] of Object.entries(item)) if (!k.startsWith('_')) dl.append(h('dt', { text: k }), h('dd', null, renderValue(v, k, null, [], false)));
+    parts.push(h('section', { class: 'panel ink', 'aria-label': t('fields') }, dl,
+      h('p', { class: 'hint' }, t('itemEtag'), etag ? code(etag) : t('etagUnavailable'))));
+    if (L.allows(sg.methods, 'PATCH')) {
+      // Sin id ni colección; los readOnly del esquema item no se ofrecen (§5.1, §5.9).
+      const original = L.editableCopy({ schemas: sg.schemas }, item);
+      const writes = L.has(state.disc, 'writes');
+      parts.push(h('details', { class: 'box ink' }, h('summary', null, t('editPatch')), jsonForm({
+        intro: t('editIntro'), initial: original, method: 'PATCH', ifMatch: writes ? etag ?? null : undefined, submitLabel: t('saveChanges'), submitIcon: 'save',
+        makeRequest: (body) => {
+          if (!isObj(body)) return { path: m.pathname, body: JSON.stringify(body), headers: { 'Content-Type': 'application/merge-patch+json' } };
+          const diff = L.mergeDiff(original, body);
+          return Object.keys(diff).length ? { path: m.pathname, body: JSON.stringify(diff), headers: { 'Content-Type': 'application/merge-patch+json' } } : null;
+        },
+        onDone: () => { state.pendingNote = t('saved'); route(); },
+      })));
     }
     view(parts);
   }
@@ -755,6 +882,7 @@
     if (m.kind === 'root') { renderOverview(); return; }
     if (m.kind === 'collection') return renderCollection(m, path, id);
     if (m.kind === 'item') return renderItem(m, path, id);
+    if (m.kind === 'singleton') return renderSingleton(m, path, id);
     return renderRaw(path, id);
   }
 

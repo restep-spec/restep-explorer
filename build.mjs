@@ -7,7 +7,7 @@
 //     (compartidos: las dos páginas los cargan con ruta absoluta /explorer/...)
 // Los textos salen de explorer-i18n.js, el mismo diccionario que usa la página en el navegador.
 // La página no lleva ningún script ni estilo en línea: funciona con la CSP de la constante CSP, más abajo.
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import vm from 'node:vm';
@@ -89,8 +89,14 @@ export { PUBLIC };
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   for (const [rel, content] of Object.entries(buildFiles())) {
     const out = join(PUBLIC, rel);
-    mkdirSync(dirname(out), { recursive: true });
-    writeFileSync(out, content);
+    if (process.argv.includes('--check')) {
+      if (!existsSync(out) || readFileSync(out, 'utf8') !== content) {
+        console.error(`Out of date: ${rel}`); process.exitCode = 1;
+      }
+    } else {
+      mkdirSync(dirname(out), { recursive: true });
+      writeFileSync(out, content);
+    }
     console.log(`  ${rel}  (${Buffer.byteLength(content)} B)`);
   }
   console.log(`\nCabecera para /explorer/* y /es/explorador/*:\n  Content-Security-Policy: ${CSP}`);
