@@ -119,6 +119,10 @@ rutas necesitan la suya. `connect-src http: https:` es lo que permite hablar con
 
 ## Uso
 
+Está publicado en <https://restep.wubytes.com/explorer/> (en español,
+<https://restep.wubytes.com/es/explorador/>): no hay nada que instalar. Para probarlo en local,
+desde la carpeta de la web:
+
 ```bash
 node vendor/restep-server.mjs                         # una API de prueba en :8080
 npx serve public                                          # y abre /explorer/ o /es/explorador/
