@@ -1,245 +1,243 @@
 # restep-explorer
 
-Explorador web de cualquier API Restep 1, el equivalente a Swagger UI sin OpenAPI: lee el
-documento de descubrimiento (§4.2) y construye a partir de él toda la interfaz. Sin dependencias,
-sin CDN y sin fuentes externas, en inglés y en español. Se publica en `restep.wubytes.com`:
-`/explorer/` (inglés) y `/es/explorador/` (español).
+Web explorer for any Restep 1 API, the equivalent of Swagger UI without OpenAPI: it reads the
+discovery document (§4.2) and builds the whole interface from it. No dependencies, no CDN and no
+external fonts, in English and Spanish. It is published at `restep.wubytes.com`:
+`/explorer/` (English) and `/es/explorador/` (Spanish).
 
-## Archivos
+## Files
 
-La fuente está aquí; `build.mjs` genera lo publicado en `public/`.
+The source lives here; `build.mjs` generates what is published in `public/`.
 
-| Fuente | Qué es |
+| Source | What it is |
 |---|---|
-| `page.html` | Plantilla de la página: `{{clave}}` (texto del diccionario, escapado), `{{{claveHtml}}}` (marcado del diccionario) y `{{=variable}}` (rutas y URL que pone `build.mjs`). |
-| `explorer-i18n.js` | El diccionario de textos, `en` y `es`, el único sitio con textos. Lo usan `build.mjs` y la página. |
-| `explorer-logic.js` | Lógica pura, sin DOM (`RestepLogic`): se prueba en Node. Toma el idioma de `<html lang>`. |
-| `explorer.js` | La interfaz: construye la página con DOM a partir de `RestepLogic`. |
-| `explorer-theme.js` | Aplica el tema guardado antes de pintar (se carga sin `defer`). |
-| `explorer.css` | Estilos. |
+| `page.html` | Page template: `{{key}}` (dictionary text, escaped), `{{{keyHtml}}}` (dictionary markup) and `{{=variable}}` (paths and URLs set by `build.mjs`). |
+| `explorer-i18n.js` | The text dictionary, `en` and `es`, the only place with text. Used by `build.mjs` and by the page. |
+| `explorer-logic.js` | Pure logic, no DOM (`RestepLogic`): tested in Node. Takes the language from `<html lang>`. |
+| `explorer.js` | The interface: builds the page with the DOM on top of `RestepLogic`. |
+| `explorer-theme.js` | Applies the saved theme before painting (loaded without `defer`). |
+| `explorer.css` | Styles. |
 
 ```bash
-node tools/restep-explorer/build.mjs       # desde projects/restep
+node tools/restep-explorer/build.mjs       # from projects/restep
 ```
 
-escribe `public/explorer/index.html` (`lang="en"`), `public/es/explorador/index.html`
-(`lang="es"`) y, en `public/explorer/`, los `.css` y `.js` compartidos, que las dos páginas cargan
-con ruta absoluta `/explorer/…`. Son scripts clásicos (con `defer`, en orden), no módulos ES: no
-hace falta `modulepreload`. Si algún día pasan a módulos, cada página tiene que precargar todo el
-grafo.
+writes `public/explorer/index.html` (`lang="en"`), `public/es/explorador/index.html`
+(`lang="es"`) and, in `public/explorer/`, the shared `.css` and `.js` files, which both pages load
+with the absolute path `/explorer/…`. They are classic scripts (with `defer`, in order), not ES
+modules: no `modulepreload` needed. If they ever become modules, each page has to preload the
+whole graph.
 
 ### CSP
 
-Las páginas no llevan ningún script ni estilo en línea, ni `style=`, ni manejadores `on*=` (la
-interfaz usa clases y `addEventListener`). La CSP va en la cabecera HTTP, no en un `<meta>`; para
-`/explorer/*` y `/es/explorador/*` tiene que ser:
+The pages carry no inline script or style, no `style=`, and no `on*=` handlers (the interface uses
+classes and `addEventListener`). The CSP goes in the HTTP header, not in a `<meta>`; for
+`/explorer/*` and `/es/explorador/*` it must be:
 
 ```
 Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src http: https:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 ```
 
-La CSP global de `public/_headers` (`script-src 'none'`) no deja funcionar el explorador: esas dos
-rutas necesitan la suya. `connect-src http: https:` es lo que permite hablar con cualquier API.
+The global CSP in `public/_headers` (`script-src 'none'`) does not let the explorer work: those two
+paths need their own. `connect-src http: https:` is what allows talking to any API.
 
-## Qué hace
+## What it does
 
-- **Resumen de la API**: versión de Restep y de la API, perfiles, extensiones, retiradas
-  anunciadas (§5.5), botón para consultar el recurso de estado (§4.4) y, por colección, ruta,
-  descripción, métodos, filtros con su tipo y operadores, orden, `limit`, `count`, relaciones,
-  mapas de idioma, campos heredados, acciones y esquemas; y cada recurso suelto (§5.9).
-- **Colección**: formulario de consulta generado del descubrimiento (filtros con el control que
-  pide cada tipo y operador, claves de orden, `fields`, `include` si hay `relations` (con las rutas hasta
-  `include_depth`, como `category.parent`; una relación a varias colecciones solo al final), `limit`
-  hasta `max_limit` y `count` si se declara), tabla de elementos, recuento (exacto o
-  estimado), «Página siguiente» siguiendo `next` tal cual (§5.2) y «Primera página».
-- **Elemento**: todos los campos; los mapas de idioma con todas sus traducciones y la que se
-  muestra en las tablas elegida por `Accept-Language` o el idioma del navegador, sin inventar
-  las que faltan; los campos heredados con su origen (`_inherited`, §11.6); la ETag de
-  elemento; las relaciones y subcolecciones como enlaces navegables.
-- **Escrituras**: crear (`POST` con un cuerpo de partida sacado del esquema `create`), editar
-  (`PATCH`: editas el JSON y se envía solo el merge patch mínimo, con las relaciones enteras,
-  §5.1) y borrar (con confirmación). Con el perfil `writes`, `If-Match` sale de `_etag` o de la
-  cabecera `ETag` y `Idempotency-Key` se genera sola en cada `POST`; se conserva la misma clave
-  mientras no llegue respuesta, para que un reintento tras un corte de red no duplique nada
-  (§7.1).
-- **Recurso suelto** (§5.9): cada uno de `singletons` tiene su enlace en la barra lateral y su
-  vista, con sus campos, su ETag y, si `methods` incluye `PATCH` o no se declara, «Editar»
-  (merge patch mínimo con `If-Match`).
-- **Acciones** (§11.1): las de `_actions` del elemento si las trae (las disponibles en su
-  estado) y si no las declaradas; con su esquema `input`, método `GET` o `POST` e
-  `Idempotency-Key` en las no idempotentes.
-- **Errores**: los `problem+json` se muestran con `code`, `detail`, `parameter`, `reason`, la
-  tabla de `errors` y una explicación de qué hacer (`unsupported_parameter`: quítalo;
-  `invalid_parameter`: corrígelo; un código desconocido, según la clase del estado, §5.4).
-- **Peticiones**: las ocho últimas, cada una con su `curl` equivalente (botón de copiar), las
-  cabeceras de la respuesta que deja leer CORS y el cuerpo.
-- **Ruta libre**: una barra para ir a cualquier ruta relativa a la raíz, también a una API sin
-  documento de descubrimiento (solo `core`).
-- **Estado en la URL**: `#api=<raíz>&path=<ruta con su consulta>`, legible y compartible. Ejemplo:
+- **API overview**: Restep and API version, profiles, extensions, announced deprecations (§5.5),
+  a button to query the status resource (§4.4) and, per collection, path, description, methods,
+  filters with their type and operators, sort, `limit`, `count`, relations, language maps,
+  inherited fields, actions and schemas; plus each singleton (§5.9).
+- **Collection**: a query form generated from discovery (filters with the control each type and
+  operator calls for, sort keys, `fields`, `include` if there are `relations` (with paths up to
+  `include_depth`, such as `category.parent`; a relation to several collections only at the end),
+  `limit` up to `max_limit` and `count` if declared), an item table, the count (exact or
+  estimated), "Next page" following `next` as is (§5.2) and "First page".
+- **Item**: every field; language maps with all their translations, and the one shown in tables
+  chosen by `Accept-Language` or the browser language, without making up missing ones; inherited
+  fields with their source (`_inherited`, §11.6); the item ETag; relations and subcollections as
+  navigable links.
+- **Writes**: create (`POST` with a starting body derived from the `create` schema), edit
+  (`PATCH`: you edit the JSON and only the minimal merge patch is sent, with whole relations,
+  §5.1) and delete (with confirmation). With the `writes` profile, `If-Match` comes from `_etag`
+  or the `ETag` header, and `Idempotency-Key` is generated automatically on every `POST`; the same
+  key is kept until a response arrives, so a retry after a network drop does not duplicate
+  anything (§7.1).
+- **Singleton** (§5.9): each one in `singletons` gets its link in the sidebar and its own view,
+  with its fields, its ETag and, if `methods` includes `PATCH` or is not declared, "Edit"
+  (minimal merge patch with `If-Match`).
+- **Actions** (§11.1): those in the item's `_actions` if it has them (the ones available in its
+  state), otherwise the declared ones; with their `input` schema, `GET` or `POST` method, and
+  `Idempotency-Key` on non-idempotent ones.
+- **Errors**: `problem+json` responses are shown with `code`, `detail`, `parameter`, `reason`, the
+  `errors` table and an explanation of what to do (`unsupported_parameter`: remove it;
+  `invalid_parameter`: fix it; an unknown code, by status class, §5.4).
+- **Requests**: the last eight, each with its equivalent `curl` (copy button), the response
+  headers CORS lets it read, and the body.
+- **Free path**: a bar to go to any path relative to the root, also on an API without a discovery
+  document (`core` only).
+- **State in the URL**: `#api=<root>&path=<path with its query>`, readable and shareable. Example:
   `#api=http://localhost:8080/&path=/books?filter[price][le]=20%26sort=-price`.
-- Teclado, etiquetas en todos los controles, región `aria-live` para avisos, foco al cambiar de
-  vista, modo claro y oscuro (automático o elegido), y diseño para móvil.
+- Keyboard support, labels on every control, an `aria-live` region for notices, focus on view
+  change, light and dark mode (automatic or chosen), and a mobile layout.
 
-### Lo que entiende del borrador 6 (§12.2)
+### What it understands from draft 6 (§12.2)
 
-- **Versión** (§1.1): `restep` tiene que seguir la gramática (`1.0`, `1.0-draft.6`, `1.0-rc.1`…)
-  con versión mayor 1. Si no, el resumen dice que no es Restep 1 y no ofrece nada más (tampoco
-  supone solo `core`). Con sufijo, avisa de que es un borrador o un candidato.
-- **Partes experimentales** (§1.2): el explorador implementa el texto de `inherit` del borrador 6
-  y solo lo usa (campo efectivo de solo lectura en la edición, origen de `_inherited`) si la API
-  anuncia la extensión `inherit` y declara exactamente `"restep": "1.0-draft.6"`. Con otra
-  versión ignora esos miembros y lo dice en el resumen. De `sync` y `batch` solo muestra lo que
-  declaran, sin usarlos.
-- **Valores desconocidos** (§4.2): un filtro con un `type` desconocido no se ofrece, de un filtro
-  solo se ofrecen los operadores conocidos, un filtro con nombre con un `type` desconocido no
-  se ofrece, una acción con un `on` o un `method` desconocidos (también en `_actions`) no se
-  ofrece, y un aviso de retirada con un `kind` que no corresponde a su sitio no se muestra. Un
-  `from` desconocido en `_inherited` se muestra como de una fuente que no se ve («hidden», §11.6).
-- **`id_from`** (§5.1): con `"client"` el cuerpo de partida del alta lleva un `id` aleatorio; con
-  un valor desconocido el `id` se quita siempre antes de enviar; sin `id_from` o con `"server"`
-  se envía lo que escribas (y el servidor responde `422` si pones un `id`).
-- **Recursos sueltos con plantilla o `parent`** (§5.9): se ignoran.
-- **Enlaces** (§3): no pide ninguna URL cuyo esquema no sea `https` ni el de la raíz; las
-  relaciones que traen `href` (obligatorio hacia una subcolección) se enlazan por él.
-- **`idempotency.anonymous: false`** (§7.1): sin token, los `POST` no llevan `Idempotency-Key`.
-- Los `POST` (alta y acciones, también con cuerpo `{}`) van con `Content-Type: application/json`
-  y un `+` literal en la consulta sale como `%2B` (§3, §5.2).
+- **Version** (§1.1): `restep` must follow the grammar (`1.0`, `1.0-draft.6`, `1.0-rc.1`…) with
+  major version 1. Otherwise the overview says it is not Restep 1 and offers nothing else (nor
+  does it assume plain `core`). With a suffix, it warns that it is a draft or a candidate.
+- **Experimental parts** (§1.2): the explorer implements the draft 6 text of `inherit` and only
+  uses it (read-only effective field when editing, source of `_inherited`) if the API announces
+  the `inherit` extension and declares exactly `"restep": "1.0-draft.6"`. With another version it
+  ignores those members and says so in the overview. Of `sync` and `batch` it only shows what
+  they declare, without using them.
+- **Unknown values** (§4.2): a filter with an unknown `type` is not offered, only known operators
+  of a filter are offered, a named filter with an unknown `type` is not offered, an action with
+  an unknown `on` or `method` (also in `_actions`) is not offered, and a deprecation notice with a
+  `kind` that does not match its place is not shown. An unknown `from` in `_inherited` is shown
+  as coming from a source you cannot see ("hidden", §11.6).
+- **`id_from`** (§5.1): with `"client"` the starting body for a create carries a random `id`; with
+  an unknown value the `id` is always removed before sending; without `id_from` or with `"server"`
+  whatever you write is sent (and the server answers `422` if you include an `id`).
+- **Singletons with a template or `parent`** (§5.9): ignored.
+- **Links** (§3): it does not fetch any URL whose scheme is neither `https` nor the root's;
+  relations that carry `href` (mandatory towards a subcollection) are linked through it.
+- **`idempotency.anonymous: false`** (§7.1): without a token, `POST` requests carry no
+  `Idempotency-Key`.
+- `POST` requests (create and actions, also with a `{}` body) go with
+  `Content-Type: application/json`, and a literal `+` in the query goes out as `%2B` (§3, §5.2).
 
-### Token y privacidad
+### Token and privacy
 
-- El token Bearer se guarda solo en `sessionStorage` (se borra al cerrar la pestaña), con una
-  clave por origen de la API, y solo se envía a ese origen: un esquema o un enlace de otro
-  origen se pide sin él (§4.3). Así, un enlace compartido que apunte a otra API no le manda tu
-  token.
-- Nunca va en el hash ni en el `curl`, que usa `"Authorization: Bearer $RESTEP_TOKEN"`.
-- En `localStorage` solo van el tema y el `Accept-Language` elegidos.
-- La página se sirve con una CSP estricta (ver arriba; solo scripts y estilos propios, y conectar
-  por `http:` o `https:`), `referrer` desactivado y nunca usa `innerHTML`.
-- El enlace a la otra versión de idioma conserva el hash (la API y la ruta, nunca el token).
+- The Bearer token is stored only in `sessionStorage` (cleared when the tab closes), with one key
+  per API origin, and is only sent to that origin: a schema or link on another origin is fetched
+  without it (§4.3). So a shared link pointing at another API does not send it your token.
+- It never goes in the hash or in the `curl`, which uses `"Authorization: Bearer $RESTEP_TOKEN"`.
+- `localStorage` holds only the chosen theme and `Accept-Language`.
+- The page is served with a strict CSP (see above; only its own scripts and styles, and
+  connecting over `http:` or `https:`), referrer disabled, and it never uses `innerHTML`.
+- The link to the other language version keeps the hash (the API and the path, never the token).
 
-## Uso
+## Usage
 
-Está publicado en <https://restep.wubytes.com/explorer/> (en español,
-<https://restep.wubytes.com/es/explorador/>): no hay nada que instalar. Para probarlo en local,
-desde la carpeta de la web:
+It is published at <https://restep.wubytes.com/explorer/> (in Spanish,
+<https://restep.wubytes.com/es/explorador/>): nothing to install. To try it locally, from the
+site folder:
 
 ```bash
-node vendor/restep-server.mjs                         # una API de prueba en :8080
-npx serve public                                          # y abre /explorer/ o /es/explorador/
+node vendor/restep-server.mjs                         # a test API on :8080
+npx serve public                                          # then open /explorer/ or /es/explorador/
 ```
 
-Escribe la raíz de la API (por ejemplo `http://localhost:8080/`) y pulsa «Explorar». Si la
-página y la API están en orígenes distintos (lo normal), la API tiene que permitir CORS: ver
-abajo. El servidor de referencia no lo hace, así que para probarlo en local tienes dos
-opciones: servir ambos desde el mismo origen, o usar una copia con CORS, como hace `test.mjs`.
+Type the API root (for example `http://localhost:8080/`) and press "Explore". If the page and the
+API are on different origins (the usual case), the API has to allow CORS: see below. The
+reference server does not, so to try it locally you have two options: serve both from the same
+origin, or use a copy with CORS, as `test.mjs` does.
 
-## CORS: qué tiene que mandar la API
+## CORS: what the API has to send
 
-El navegador solo deja a la página hablar con una API de otro origen si esta lo permite. Para
-el explorador, la API necesita:
+The browser only lets the page talk to an API on another origin if the API allows it. For the
+explorer, the API needs:
 
 ```
-# En toda respuesta (también en los errores):
-Access-Control-Allow-Origin: *              (o el origen del explorador)
+# On every response (errors too):
+Access-Control-Allow-Origin: *              (or the explorer's origin)
 Access-Control-Expose-Headers: ETag, Location, Link, Allow, WWW-Authenticate, Retry-After,
   Idempotent-Replayed, Preference-Applied, Content-Language, Deprecation, Sunset, Accept-Patch
 
-# En la respuesta a la petición previa (OPTIONS con Access-Control-Request-Method):
+# On the response to the preflight (OPTIONS with Access-Control-Request-Method):
 Access-Control-Allow-Methods: GET, HEAD, POST, PATCH, DELETE
 Access-Control-Allow-Headers: Authorization, Content-Type, If-Match, If-None-Match,
   Idempotency-Key, Prefer, Accept-Language
 Access-Control-Max-Age: 600
 ```
 
-- Sin `ETag` en `Expose-Headers`, el explorador no puede leer la ETag de elemento: para
-  escribir con `If-Match` necesita entonces `_etag` en la representación. Lo avisa.
-- Sin `Location`, después de crear va al elemento por el `id` del cuerpo.
-- Sin `WWW-Authenticate`, no puede mostrar el reto de un `401` ni el enlace a los metadatos de
-  OAuth (§11.5 ya pide exponerla).
-- Sin `Link`, no puede seguir un `service-desc` cuando la raíz no es el documento de
-  descubrimiento.
-- `Access-Control-Allow-Headers: *` no cubre `Authorization`: hay que nombrarla.
-- Las API con `Access-Control-Allow-Origin: *` funcionan con token, porque el explorador lo
-  manda en `Authorization`, no en cookies.
-- Publicado en `https://restep.wubytes.com`, el explorador puede llamar a
-  `http://localhost:…` en Chrome y Firefox (localhost cuenta como seguro), pero Chrome puede
-  pedir también `Access-Control-Allow-Private-Network: true` en la petición previa (Private
-  Network Access). Cualquier otra API en `http:` la bloquea el navegador por contenido mixto.
+- Without `ETag` in `Expose-Headers`, the explorer cannot read the item ETag: to write with
+  `If-Match` it then needs `_etag` in the representation. It warns about this.
+- Without `Location`, after a create it goes to the item by the `id` in the body.
+- Without `WWW-Authenticate`, it cannot show the challenge of a `401` or the link to the OAuth
+  metadata (§11.5 already requires exposing it).
+- Without `Link`, it cannot follow a `service-desc` when the root is not the discovery document.
+- `Access-Control-Allow-Headers: *` does not cover `Authorization`: it has to be named.
+- APIs with `Access-Control-Allow-Origin: *` work with a token, because the explorer sends it in
+  `Authorization`, not in cookies.
+- Published at `https://restep.wubytes.com`, the explorer can call `http://localhost:…` in Chrome
+  and Firefox (localhost counts as secure), but Chrome may also ask for
+  `Access-Control-Allow-Private-Network: true` on the preflight (Private Network Access). Any
+  other API on `http:` is blocked by the browser as mixed content.
 
-## Pruebas
+## Tests
 
 ```bash
-node tools/restep-explorer/build.mjs       # desde projects/restep
+node tools/restep-explorer/build.mjs       # from projects/restep
 node tools/restep-explorer/test.mjs
 ```
 
-Prueban la versión construida, y fallan si `public/` no está al día con la fuente.
+They test the built version, and fail if `public/` is not up to date with the source.
 
-- **Lógica pura**: `explorer-i18n.js` y `explorer-logic.js` publicados se evalúan en Node (vm), en
-  inglés y en español (parseo del descubrimiento, rutas y plantillas, constructor y lector de
-  consultas, merge patch mínimo, cuerpos de partida, ETag, relaciones, traducciones, `Link`,
-  `curl`, errores y textos). El diccionario tiene las mismas claves en los dos idiomas y todas
-  las que usa el código.
-- **Páginas**: en las dos, nada en línea (ni `<script>` sin `src`, ni `<style>`, ni `style=`, ni
-  `on*=`), solo recursos propios, `lang`, título, descripción, canonical, `hreflang`, `og:*`,
-  favicon y la cabecera del sitio con su nav y el cambio de idioma; en el JS, nada de
-  `innerHTML`, `setAttribute('style')` ni `eval`.
-- **Integración**: copia el servidor de referencia a un directorio temporal, le añade CORS (el
-  original no se toca), lo arranca en `:8840` y sirve las páginas desde `public/` en `:8841`, con
-  la CSP de arriba como cabecera HTTP. Comprueba la petición previa de CORS y la lógica contra la
-  API real: consultas, paginación con `next`, errores, `PATCH` con `If-Match` (y el `412` con una
-  ETag vieja), `POST` repetido con la misma `Idempotency-Key`, `DELETE`, el `PATCH` del recurso
-  suelto `/shop`, la subcolección `reviews` desde su libro (404 sin él, borrada con él), `include`
-  con profundidad 2, la relación `highlight` enlazada por su `href`, la polimórfica `showcase`
-  por su `type`, y las acciones `low_stock` (`GET` de colección), `restock` (`POST` de elemento
-  con `input`, por el `href` de `_actions`), `find_or_create` e `inherit_tax` (idempotentes).
-- **Navegador**: si encuentra Chrome o Chromium (o `CHROME=/ruta`), lo arranca en modo headless
-  con el protocolo de DevTools en `:8842`, carga las dos páginas (una colección filtrada, un
-  elemento con mapas de idioma y relación, el recurso suelto `/shop`, un error, el tema y el
-  enlace de idioma) y falla si
-  hay en consola alguna violación de CSP (también escucha `securitypolicyviolation`), una
-  excepción o un `console.error`. Si no lo hay, esas pruebas se omiten.
+- **Pure logic**: the published `explorer-i18n.js` and `explorer-logic.js` are evaluated in Node
+  (vm), in English and Spanish (discovery parsing, paths and templates, query builder and reader,
+  minimal merge patch, starting bodies, ETag, relations, translations, `Link`, `curl`, errors and
+  texts). The dictionary has the same keys in both languages and every key the code uses.
+- **Pages**: in both, nothing inline (no `<script>` without `src`, no `<style>`, no `style=`, no
+  `on*=`), only own resources, `lang`, title, description, canonical, `hreflang`, `og:*`, favicon
+  and the site header with its nav and language switch; in the JS, no `innerHTML`,
+  `setAttribute('style')` or `eval`.
+- **Integration**: copies the reference server to a temporary directory, adds CORS to it (the
+  original is untouched), starts it on `:8840` and serves the pages from `public/` on `:8841`, with
+  the CSP above as an HTTP header. It checks the CORS preflight and the logic against the real
+  API: queries, pagination with `next`, errors, `PATCH` with `If-Match` (and the `412` with a stale
+  ETag), a repeated `POST` with the same `Idempotency-Key`, `DELETE`, the `PATCH` of the `/shop`
+  singleton, the `reviews` subcollection from its book (404 without it, deleted along with it),
+  `include` with depth 2, the `highlight` relation linked through its `href`, the polymorphic
+  `showcase` through its `type`, and the actions `low_stock` (collection `GET`), `restock` (item
+  `POST` with `input`, through the `href` in `_actions`), `find_or_create` and `inherit_tax`
+  (idempotent).
+- **Browser**: if it finds Chrome or Chromium (or `CHROME=/path`), it starts it headless with the
+  DevTools protocol on `:8842`, loads both pages (a filtered collection, an item with language
+  maps and a relation, the `/shop` singleton, an error, the theme and the language link) and fails
+  if the console shows any CSP violation (it also listens for `securitypolicyviolation`), an
+  exception or a `console.error`. If there is no browser, those tests are skipped.
 
-## Límites
+## Limits
 
-- No implementa `sync` (`:changes`, avisos SSE), `batch`, `filter-expr` (un `filter=…` escrito
-  en la barra de ruta se conserva, pero no hay formulario) ni `query-method`.
-- `fields` ofrece los campos del esquema `item` si es un objeto incrustado y, si no, los que
-  aparecen en la página actual.
-- Los esquemas se usan para el cuerpo de partida y se muestran, pero no se valida contra ellos
-  antes de enviar: la API valida y el explorador muestra su `422`.
-- Las subcolecciones solo se abren desde un elemento de su colección padre, que se busca por
-  prefijo de ruta, no por `parent` (§4.2).
-- No muestra `id_from`, `collations` ni `parent` en las fichas de colección, ni anota con
-  `Deprecation` las respuestas que lo traen (solo salen en el registro de cabeceras).
-- En un recurso suelto no hay formulario de `fields` (§5.9), y sus relaciones se muestran como
-  JSON, sin enlazar su `href`.
-- No revalida el descubrimiento según su `Cache-Control` (§4.2): lo vuelve a leer al cambiar de
-  API, al guardar el token o el idioma y con «Recargar».
-- No hay `Prefer: return=minimal` ni `If-None-Match`: todas las lecturas van con
+- It does not implement `sync` (`:changes`, SSE notifications), `batch`, `filter-expr` (a
+  `filter=…` typed in the path bar is kept, but there is no form) or `query-method`.
+- `fields` offers the fields of the `item` schema if it is an embedded object and, otherwise, the
+  ones that appear on the current page.
+- Schemas are used for the starting body and are shown, but nothing is validated against them
+  before sending: the API validates and the explorer shows its `422`.
+- Subcollections can only be opened from an item of their parent collection, which is found by
+  path prefix, not by `parent` (§4.2).
+- It does not show `id_from`, `collations` or `parent` on collection cards, nor does it annotate
+  responses that carry `Deprecation` (they only appear in the header log).
+- On a singleton there is no `fields` form (§5.9), and its relations are shown as JSON, without
+  linking their `href`.
+- It does not revalidate discovery according to its `Cache-Control` (§4.2): it reads it again on
+  changing API, on saving the token or the language, and with "Reload".
+- There is no `Prefer: return=minimal` and no `If-None-Match`: every read goes with
   `cache: no-store`.
 
-## Dudas sobre la spec
+## Open questions about the spec
 
-- **CORS para clientes de navegador.** Resuelto en §5.8 del borrador 5: cabeceras expuestas, preflight y `Vary: Origin`. La configuración de la API sigue siendo necesaria.
-- **Qué variable de plantilla corresponde a qué padre.** Resuelto en el borrador 6: la
-  subcolección declara `parent` y su ruta empieza por la del padre (§4.2).
-- **Relaciones a una colección con plantilla.** Resuelto en el borrador 6: el objeto de relación
-  lleva `href` (§3), y el explorador lo enlaza por él.
-- **Lista de campos sin esquema.** Sin `schemas.item` no hay forma de saber qué campos admite
-  `fields` salvo mirando elementos; un elemento con un campo ausente lo oculta.
-- **`_actions` de una acción sin declarar.** Resuelto en el borrador 6: `_actions` solo lista
-  acciones declaradas, con su método (§11.1). Si un servidor lista otra, el explorador la sigue
-  tratando como no segura y no idempotente, y le pone `Idempotency-Key`.
-- **Qué texto de una parte experimental implementa un cliente para `"1.0"`.** §1.2 pide que el
-  cliente implemente «el texto de la versión que declara el servidor». El explorador solo
-  conoce el del borrador 6; no puede saber si la 1.0 publicada lo mantendrá, así que con
-  `"1.0"` ignora `inherit` (el comprobador, en cambio, acepta `1.0-draft.6` y `1.0`).
+- **CORS for browser clients.** Resolved in §5.8 of draft 5: exposed headers, preflight and `Vary: Origin`. The API configuration is still needed.
+- **Which template variable maps to which parent.** Resolved in draft 6: the subcollection
+  declares `parent` and its path starts with the parent's (§4.2).
+- **Relations to a collection with a template.** Resolved in draft 6: the relation object
+  carries `href` (§3), and the explorer links through it.
+- **Field list without a schema.** Without `schemas.item` there is no way to know which fields
+  `fields` accepts other than looking at items; an item with a missing field hides it.
+- **`_actions` with an undeclared action.** Resolved in draft 6: `_actions` only lists declared
+  actions, with their method (§11.1). If a server lists another one, the explorer still treats it
+  as unsafe and non-idempotent, and gives it an `Idempotency-Key`.
+- **Which text of an experimental part a client implements for `"1.0"`.** §1.2 asks the client
+  to implement "the text of the version the server declares". The explorer only knows the draft 6
+  text; it cannot know whether the published 1.0 will keep it, so with `"1.0"` it ignores
+  `inherit` (the checker, by contrast, accepts `1.0-draft.6` and `1.0`).
 
-## Código y avisos
+## Code and issues
 
-Código y avisos: <https://github.com/restep-spec/restep-explorer>. Ese repositorio se genera desde la web de
-Restep, donde la herramienta se desarrolla junto a la [especificación](https://restep.wubytes.com/1/) y el servidor de
-referencia: `vendor/` y `schema/` son copias de la web para que las pruebas funcionen solas.
+Code and issues: <https://github.com/restep-spec/restep-explorer>. That repository is generated from the Restep
+site, where the tool is developed alongside the [specification](https://restep.wubytes.com/1/) and the reference
+server: `vendor/` and `schema/` are copies from the site so the tests run on their own.
 
-Licencia MIT.
+MIT licensed.
