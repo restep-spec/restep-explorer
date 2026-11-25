@@ -1,4 +1,4 @@
-/* restep-explorer: estilos. Archivo externo (la CSP de la página es style-src 'self'). */
+/* restep-explorer: styles. External file (the page's CSP is style-src 'self'). */
 :root{
   --paper:#f7f3ea;--card:#fffdf8;--ink:#161616;--mute:#5a5448;--line:#d8cfbb;--dot:#e6dcc6;
   --acc:#ff6a3d;--acc-soft:#ffe1d4;--step:#ffd23f;--mint:#bfe9d9;--blue:#2f5fd0;--on:#161616;

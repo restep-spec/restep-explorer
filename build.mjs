@@ -1,12 +1,12 @@
-// Construye restep-explorer para restep.wubytes.com, en inglés y en español, desde una sola fuente.
-//   node tools/restep-explorer/build.mjs        (desde projects/restep)
-// Escribe:
+// Builds restep-explorer for restep.wubytes.com, in English and Spanish, from a single source.
+//   node tools/restep-explorer/build.mjs        (from projects/restep)
+// Writes:
 //   public/explorer/index.html            (lang="en")
 //   public/es/explorador/index.html       (lang="es")
 //   public/explorer/explorer.css, explorer-theme.js, explorer-i18n.js, explorer-logic.js, explorer.js
-//     (compartidos: las dos páginas los cargan con ruta absoluta /explorer/...)
-// Los textos salen de explorer-i18n.js, el mismo diccionario que usa la página en el navegador.
-// La página no lleva ningún script ni estilo en línea: funciona con la CSP de la constante CSP, más abajo.
+//     (shared: both pages load them with the absolute path /explorer/...)
+// The texts come from explorer-i18n.js, the same dictionary the page uses in the browser.
+// The page has no inline script or style: it works with the CSP in the CSP constant, below.
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -16,10 +16,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(here, 'public');
 const ORIGIN = 'https://restep.wubytes.com';
 
-// La CSP que necesitan /explorer/* y /es/explorador/* (va en public/_headers, no en la página).
+// The CSP that /explorer/* and /es/explorador/* need (it goes in public/_headers, not in the page).
 export const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src http: https:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
-// Archivos que se copian tal cual a public/explorer/, en el orden en que los carga la página.
+// Files copied as they are to public/explorer/, in the order the page loads them.
 export const ASSETS = ['explorer.css', 'explorer-theme.js', 'explorer-i18n.js', 'explorer-logic.js', 'explorer.js'];
 
 export const PAGES = {
@@ -42,12 +42,12 @@ export function loadDictionary() {
 
 const escapeHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-// {{clave}}: texto del diccionario, escapado. {{{claveHtml}}}: marcado del diccionario, tal cual.
-// {{=variable}}: un valor de la construcción (rutas, URL), escapado. Lo que falte es un error.
+// {{key}}: text from the dictionary, escaped. {{{keyHtml}}}: markup from the dictionary, as is.
+// {{=variable}}: a value from the build (paths, URLs), escaped. Anything missing is an error.
 export function renderPage(lang, template = readFileSync(join(here, 'page.html'), 'utf8'), dict = loadDictionary()) {
   const page = PAGES[lang];
   const d = dict[lang];
-  if (!page || !d) throw new Error(`idioma sin página o sin diccionario: ${lang}`);
+  if (!page || !d) throw new Error(`language without a page or a dictionary: ${lang}`);
   const vars = {
     lang, url: ORIGIN + page.path, urlEn: ORIGIN + PAGES.en.path, urlEs: ORIGIN + PAGES.es.path,
     assets: '/explorer/', home: page.home, spec: page.spec, tools: page.tools, self: page.path,
@@ -55,26 +55,26 @@ export function renderPage(lang, template = readFileSync(join(here, 'page.html')
   };
   const text = (key) => {
     const v = d[key];
-    if (typeof v !== 'string') throw new Error(`page.html usa «${key}», que no es un texto en el diccionario «${lang}»`);
+    if (typeof v !== 'string') throw new Error(`page.html uses "${key}", which is not a text in the "${lang}" dictionary`);
     return v;
   };
   return template
     .replace(/\{\{\{([A-Za-z0-9]+)\}\}\}/g, (_, key) => {
-      if (!key.endsWith('Html')) throw new Error(`{{{${key}}}}: solo las claves que acaban en Html van sin escapar`);
+      if (!key.endsWith('Html')) throw new Error(`{{{${key}}}}: only keys ending in Html go unescaped`);
       return text(key);
     })
     .replace(/\{\{=([A-Za-z0-9]+)\}\}/g, (_, key) => {
-      if (!(key in vars)) throw new Error(`page.html usa la variable «${key}», que build.mjs no define`);
+      if (!(key in vars)) throw new Error(`page.html uses the variable "${key}", which build.mjs does not define`);
       return escapeHtml(vars[key]);
     })
     .replace(/\{\{([A-Za-z0-9]+)\}\}/g, (_, key) => {
-      if (key.endsWith('Html')) throw new Error(`{{${key}}}: una clave Html va entre llaves triples`);
+      if (key.endsWith('Html')) throw new Error(`{{${key}}}: an Html key goes in triple braces`);
       return escapeHtml(text(key));
     })
-    .replace(/\{\{[^}]*\}\}/g, (m) => { throw new Error(`marcador sin reemplazar en page.html: ${m}`); });
+    .replace(/\{\{[^}]*\}\}/g, (m) => { throw new Error(`unreplaced placeholder in page.html: ${m}`); });
 }
 
-// Todo lo que se publica: { 'ruta relativa a public/': contenido }.
+// Everything that is published: { 'path relative to public/': content }.
 export function buildFiles() {
   const template = readFileSync(join(here, 'page.html'), 'utf8');
   const dict = loadDictionary();
@@ -99,5 +99,5 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     }
     console.log(`  ${rel}  (${Buffer.byteLength(content)} B)`);
   }
-  console.log(`\nCabecera para /explorer/* y /es/explorador/*:\n  Content-Security-Policy: ${CSP}`);
+  console.log(`\nHeader for /explorer/* and /es/explorador/*:\n  Content-Security-Policy: ${CSP}`);
 }

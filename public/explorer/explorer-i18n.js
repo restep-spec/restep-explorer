@@ -1,14 +1,14 @@
-// restep-explorer: diccionario de textos en inglés y español, el único sitio con textos de la interfaz.
-// Lo usan la página en el navegador (explorer-logic.js y explorer.js, con el idioma de <html lang>) y
-// build.mjs, que rellena con él la plantilla page.html. Un valor puede ser una cadena o una función que
-// recibe los argumentos de t('clave', ...args). Las claves que acaban en Html llevan marcado y solo las
-// usa build.mjs; las demás son texto plano (en la página nunca se usa innerHTML).
+// restep-explorer: dictionary of texts in English and Spanish, the only place with interface texts.
+// It is used by the page in the browser (explorer-logic.js and explorer.js, with the language of <html lang>) and
+// by build.mjs, which fills the page.html template with it. A value can be a string or a function that
+// receives the arguments of t('key', ...args). Keys ending in Html carry markup and are only
+// used by build.mjs; the others are plain text (the page never uses innerHTML).
 (function () {
   'use strict';
   const plural = (n, one, many) => (n === 1 ? one : many);
 
   const en = {
-    // ── Página (build.mjs) ───────────────────────────────────────────────────
+    // ── Page (build.mjs) ───────────────────────────────────────────────────
     pageTitle: 'Restep Explorer: browse any Restep API',
     pageDescription: 'Explore any Restep API from your browser: collections, filters, sorting, pagination, items, relations, writes and actions, all built from its discovery document.',
     ogTitle: 'Restep Explorer: browse any Restep API',
@@ -43,19 +43,65 @@
     logHint: 'The latest requests from this tab, with their curl equivalent and the response as it arrived.',
     footerHtml: 'Restep Explorer reads the discovery document (<a href="/1/#discovery">§4.2</a>) and keeps nothing outside your browser. More in <a href="/tools/">Tools</a>. Restep is an open draft by <a href="https://wubytes.com/">wubytes</a>.',
 
-    // ── Lógica (explorer-logic.js) ───────────────────────────────────────────
+    // ── Logic (explorer-logic.js) ───────────────────────────────────────────
     errNoUrl: 'Type the API URL.',
     errBadUrl: (input) => `“${input}” is not a valid URL.`,
     errScheme: 'The URL has to start with http:// or https://.',
     errCreds: 'Do not put credentials in the URL: use the token field.',
     errTemplate: (tpl) => `A value is missing for the template ${tpl}.`,
-    ops: { eq: '= equal to', ne: '≠ not equal to', lt: '< less than', le: '≤ less or equal', gt: '> greater than', ge: '≥ greater or equal', in: 'in the list', null: 'no value' },
+    ops: { eq: '= equal to', ne: '≠ not equal to', lt: '< less than', le: '≤ less or equal', gt: '> greater than', ge: '≥ greater or equal', in: 'in the list', nin: 'not in the list', null: 'no value', prefix: 'starts with', contains: 'contains' },
     nullYes: 'yes: absent or null',
     nullNo: 'no: has a value',
+    nullGroupYes: 'yes: none',
+    nullGroupNo: 'no: some',
+    nullGroupHint: 'null tests the whole list: alone, yes is empty, absent or null; with other filters on it, yes is that no element meets them all at once and no that some does (§6.1).',
+    nullGroup: 'null tests the whole list: empty or absent, or, with other filters on it, no element meets them all at once',
+    nullTwice: (group) => `Only one null filter per group: ${group} has more than one, and the server would answer invalid_parameter (§6.1).`,
     hintIn: 'Comma-separated; no value may contain commas.',
     hintDecimal: 'Exact decimal, with a point: 18.50',
     hintDatetime: 'RFC 3339 with offset',
-    hintDuration: 'ISO 8601, no years or months',
+    hintDuration: 'ISO 8601, no years or months; seconds may have a fraction (PT1.5S)',
+    hintLocalDatetime: 'Date and wall-clock time, without offset',
+    hintTimezone: 'A name from the IANA Time Zone Database',
+    hintNotEmpty: 'Cannot be empty.',
+    unavailableDisc: 'The discovery document could not be read. This error says nothing about what the API supports, so nothing is assumed (§4.2).',
+    trustEffects: 'Trust the effects this API declares',
+    trustHint: 'Checked, an operation declared with no effects runs without asking; one with effects always asks (§11.1, §13.1). Kept in this browser for this origin.',
+    effectNames: { destroys: 'destroys data that cannot be recovered', external: 'reaches outside the API', charges: 'costs money' },
+    confirmEffects: (what, list) => `Run ${what}? It declares these effects: ${list}.`,
+    confirmNoEffects: (what) => `Run ${what}? It declares no effects, but you do not trust this API's declarations (§13.1).`,
+    notConfirmed: 'Not sent.',
+    effectsLabel: 'Effects',
+    effectsNone: 'none declared',
+    quantifierSome: 'some related item or element',
+    requiredBadge: 'required',
+    defaultOn: 'on by default',
+    defaultHint: (name) => `It applies unless you uncheck it (filter[${name}]=false). Unchecked, it does not ask for the opposite.`,
+    localizedLabel: 'Localized fields',
+    localizedFrom: (src) => `Localized, read-only: write ${src}.`,
+    languageReceived: (l) => `Language of the response: ${l}`,
+    uploadLabel: 'Files',
+    uploadBox: 'Upload a file (POST)',
+    uploadIntro: (types, max) => `It creates an item from the file's bytes. Types: ${types}.${max ? ` Up to ${max} bytes.` : ''}`,
+    uploadOnlyFiles: 'This collection only takes files: it does not create items from JSON (§5.1).',
+    uploadJsonMultipart: 'A JSON body creates an item from its fields, so a JSON file goes as the file part of multipart/form-data (§5.1).',
+    uploadJsonNoMultipart: 'This collection creates items from JSON and does not declare multipart: it cannot take a JSON file (§5.1).',
+    uploadFile: 'File',
+    uploadSend: 'Upload',
+    uploadBadType: (type) => `This collection does not take ${type || 'files without a type'}.`,
+    uploadTooBig: (size, max) => `The file has ${size} bytes; the collection takes up to ${max}.`,
+    uploadNoFile: 'Choose a file first.',
+    contentLink: 'File bytes',
+    noList: 'This collection cannot be listed: its methods leave out GET (§4.3).',
+    inheritedItem: 'Inherited item, read-only here (§11.6). It comes from ',
+    inheritedRow: 'inherited',
+    inheritItemsLabel: 'Inherited items',
+    paramsLegend: 'Parameters',
+    paramMissing: (name) => `${name} is required.`,
+    outputLabel: 'Result (output): data of this shape, not the item',
+    newSchema: 'Effective schema given by :new (advisory: the POST still decides)',
+    hangsFrom: (p) => ` · hangs from ${p}`,
+    singletonParentIds: 'This singleton hangs from an item: open it from that item, or type its path in the bar above.',
     hints: {
       unsupported_parameter: 'This resource does not offer that: remove it from the request. Repeating it unchanged will not help.',
       invalid_parameter: 'The resource accepts it, but the value is wrong: fix it and try again.',
@@ -78,6 +124,11 @@
       invalid: 'The body is understood but not valid: see the list of errors.',
       idempotency_mismatch: 'That Idempotency-Key was already used with another request.',
       rate_limited: 'Too many requests: wait as long as Retry-After says.',
+      request_timeout: 'The server did not get the whole request in time: it can be sent again as is.',
+      misdirected_request: 'The request reached a server that cannot answer for this origin: it can be sent again.',
+      too_early: 'The server will not process a request sent in TLS early data: it can be sent again.',
+      bad_gateway: 'A server the API depends on answered wrongly.',
+      gateway_timeout: 'A server the API depends on did not answer in time.',
       internal: 'Server failure.',
       not_implemented: 'The server does not know the method.',
       unavailable: 'Unavailable for a while: try later.',
@@ -85,7 +136,7 @@
     hintServer: 'Server error.',
     hintClient: 'Error in the request.',
 
-    // ── Interfaz (explorer.js) ───────────────────────────────────────────────
+    // ── Interface (explorer.js) ───────────────────────────────────────────────
     copied: 'Copied to the clipboard.',
     copyFailed: 'Could not copy: select the text and copy it by hand.',
     copy: 'Copy',
@@ -220,6 +271,7 @@
     createItem: 'Create an item (POST)',
     preparingForm: 'Preparing the form…',
     createIntro: (path, hasSchema) => `Sent as application/json to ${path}.${hasSchema ? ' The required fields of the schema and those with a default are filled in (§4.3).' : ''}`,
+    createMixed: 'It always creates an item from these fields, never a file; files go through the upload box (§5.1).',
     idFromServer: 'The server assigns the id (§5.1).',
     idFromClient: 'The client chooses the id (id_from "client", §5.1): a random one is filled in.',
     idFromEither: 'You may send an id (id_from "either", §5.1); without one, the server assigns it.',
@@ -228,7 +280,7 @@
     singletonKicker: (p) => `Singleton · ${p}`,
     notRestep1: (v) => `The discovery document declares "restep": "${v}", which is not a version of Restep 1 (§1.1). This explorer does not use it as Restep 1, nor assumes core only.`,
     draftNote: (v) => `"${v}" is a draft or a release candidate: it may differ from the published version and from other drafts (§1.1).`,
-    experimentalOff: (names, v) => `Experimental parts announced (${names}) are ignored: this explorer implements their text only for 1.0-draft.6, and the API declares ${v} (§1.2).`,
+    experimentalOff: (names, v) => `Experimental parts announced (${names}) are ignored: this explorer implements their text only for 1.0-draft.7, and the API declares ${v} (§1.2).`,
     announcedOn: (date) => `, announced on ${date}`,
     fromHidden: 'It is inherited, from a source you cannot see.',
     errLinkScheme: (u) => `Not followed: ${u} uses a scheme that is neither https nor the API root's (§3).`,
@@ -286,7 +338,7 @@
   };
 
   const es = {
-    // ── Página (build.mjs) ───────────────────────────────────────────────────
+    // ── Page (build.mjs) ───────────────────────────────────────────────────
     pageTitle: 'Restep Explorer: explora cualquier API Restep',
     pageDescription: 'Explora cualquier API Restep desde el navegador: colecciones, filtros, orden, paginación, elementos, relaciones, escrituras y acciones, a partir de su documento de descubrimiento.',
     ogTitle: 'Restep Explorer: explora cualquier API Restep',
@@ -321,19 +373,65 @@
     logHint: 'Las últimas peticiones de esta pestaña, con su equivalente en curl y la respuesta tal como llegó.',
     footerHtml: 'Restep Explorer lee el documento de descubrimiento (<a href="/es/1/#descubrimiento">§4.2</a>) y no guarda nada fuera de tu navegador. Más en <a href="/es/herramientas/">Herramientas</a>. Restep es un borrador abierto de <a href="https://wubytes.com/">wubytes</a>.',
 
-    // ── Lógica (explorer-logic.js) ───────────────────────────────────────────
+    // ── Logic (explorer-logic.js) ───────────────────────────────────────────
     errNoUrl: 'Escribe la URL de la API.',
     errBadUrl: (input) => `«${input}» no es una URL válida.`,
     errScheme: 'La URL tiene que empezar por http:// o https://.',
     errCreds: 'No pongas credenciales en la URL: usa el campo del token.',
     errTemplate: (tpl) => `Falta un valor para la plantilla ${tpl}.`,
-    ops: { eq: '= igual a', ne: '≠ distinto de', lt: '< menor que', le: '≤ menor o igual', gt: '> mayor que', ge: '≥ mayor o igual', in: 'en la lista', null: 'sin valor' },
+    ops: { eq: '= igual a', ne: '≠ distinto de', lt: '< menor que', le: '≤ menor o igual', gt: '> mayor que', ge: '≥ mayor o igual', in: 'en la lista', nin: 'fuera de la lista', null: 'sin valor', prefix: 'empieza por', contains: 'contiene' },
     nullYes: 'sí: ausente o null',
     nullNo: 'no: tiene valor',
+    nullGroupYes: 'sí: ninguno',
+    nullGroupNo: 'no: alguno',
+    nullGroupHint: 'null prueba la lista entera: solo, sí es vacía, ausente o null; con otros filtros sobre ella, sí es que ningún elemento los cumple todos a la vez y no, que alguno los cumple (§6.1).',
+    nullGroup: 'null prueba la lista entera: vacía o ausente, o, con otros filtros sobre ella, que ningún elemento los cumple todos a la vez',
+    nullTwice: (group) => `Solo un filtro null por grupo: ${group} tiene más de uno, y el servidor respondería invalid_parameter (§6.1).`,
     hintIn: 'Separados por comas; ningún valor puede llevar comas.',
     hintDecimal: 'Decimal exacto, con punto: 18.50',
     hintDatetime: 'RFC 3339 con desfase',
-    hintDuration: 'ISO 8601, sin años ni meses',
+    hintDuration: 'ISO 8601, sin años ni meses; los segundos admiten fracción (PT1.5S)',
+    hintLocalDatetime: 'Fecha y hora de reloj, sin desfase',
+    hintTimezone: 'Un nombre de la base de datos de zonas horarias de IANA',
+    hintNotEmpty: 'No puede ir vacío.',
+    unavailableDisc: 'No se pudo leer el documento de descubrimiento. Este error no dice nada de lo que admite la API, así que no se supone nada (§4.2).',
+    trustEffects: 'Confiar en los efectos que declara esta API',
+    trustHint: 'Marcado, una operación declarada sin efectos se ejecuta sin preguntar; una con efectos pregunta siempre (§11.1, §13.1). Se guarda en este navegador para este origen.',
+    effectNames: { destroys: 'borra datos que no se pueden recuperar', external: 'sale de la API', charges: 'cuesta dinero' },
+    confirmEffects: (what, list) => `¿Ejecutar ${what}? Declara estos efectos: ${list}.`,
+    confirmNoEffects: (what) => `¿Ejecutar ${what}? No declara efectos, pero no confías en lo que declara esta API (§13.1).`,
+    notConfirmed: 'No se ha enviado.',
+    effectsLabel: 'Efectos',
+    effectsNone: 'ninguno declarado',
+    quantifierSome: 'algún elemento relacionado o de la lista',
+    requiredBadge: 'obligatorio',
+    defaultOn: 'activo por defecto',
+    defaultHint: (name) => `Se aplica salvo que lo desmarques (filter[${name}]=false). Desmarcado, no pide lo contrario.`,
+    localizedLabel: 'Campos traducidos',
+    localizedFrom: (src) => `Traducido, de solo lectura: se escribe en ${src}.`,
+    languageReceived: (l) => `Idioma de la respuesta: ${l}`,
+    uploadLabel: 'Ficheros',
+    uploadBox: 'Subir un fichero (POST)',
+    uploadIntro: (types, max) => `Crea un elemento a partir de los bytes del fichero. Tipos: ${types}.${max ? ` Hasta ${max} bytes.` : ''}`,
+    uploadOnlyFiles: 'Esta colección solo admite ficheros: no crea elementos desde JSON (§5.1).',
+    uploadJsonMultipart: 'Un cuerpo JSON crea un elemento con sus campos, así que un fichero JSON va como la parte file de multipart/form-data (§5.1).',
+    uploadJsonNoMultipart: 'Esta colección crea elementos desde JSON y no declara multipart: no puede recibir un fichero JSON (§5.1).',
+    uploadFile: 'Fichero',
+    uploadSend: 'Subir',
+    uploadBadType: (type) => `Esta colección no admite ${type || 'ficheros sin tipo'}.`,
+    uploadTooBig: (size, max) => `El fichero tiene ${size} bytes; la colección admite hasta ${max}.`,
+    uploadNoFile: 'Elige antes un fichero.',
+    contentLink: 'Bytes del fichero',
+    noList: 'Esta colección no se puede listar: sus métodos no incluyen GET (§4.3).',
+    inheritedItem: 'Elemento heredado, de solo lectura aquí (§11.6). Viene de ',
+    inheritedRow: 'heredado',
+    inheritItemsLabel: 'Elementos heredados',
+    paramsLegend: 'Parámetros',
+    paramMissing: (name) => `${name} es obligatorio.`,
+    outputLabel: 'Resultado (output): datos con esta forma, no el elemento',
+    newSchema: 'Esquema efectivo que da :new (orientativo: decide el POST)',
+    hangsFrom: (p) => ` · cuelga de ${p}`,
+    singletonParentIds: 'Este recurso suelto cuelga de un elemento: ábrelo desde ese elemento o escribe su ruta en la barra de arriba.',
     hints: {
       unsupported_parameter: 'Este recurso no ofrece eso: quítalo de la petición. Repetirla igual no servirá.',
       invalid_parameter: 'El recurso lo admite, pero el valor no vale: corrígelo y vuelve a intentarlo.',
@@ -356,6 +454,11 @@
       invalid: 'El cuerpo se entiende pero no es válido: mira la lista de errores.',
       idempotency_mismatch: 'Esa Idempotency-Key ya se usó con otra petición.',
       rate_limited: 'Demasiadas peticiones: espera lo que diga Retry-After.',
+      request_timeout: 'El servidor no recibió a tiempo la petición entera: se puede volver a enviar tal cual.',
+      misdirected_request: 'La petición llegó a un servidor que no puede responder por este origen: se puede volver a enviar.',
+      too_early: 'El servidor no procesa una petición enviada en datos tempranos de TLS: se puede volver a enviar.',
+      bad_gateway: 'Un servidor del que depende la API respondió mal.',
+      gateway_timeout: 'Un servidor del que depende la API no respondió a tiempo.',
       internal: 'Fallo del servidor.',
       not_implemented: 'El servidor no conoce el método.',
       unavailable: 'No disponible por un tiempo: prueba más tarde.',
@@ -363,7 +466,7 @@
     hintServer: 'Error del servidor.',
     hintClient: 'Error en la petición.',
 
-    // ── Interfaz (explorer.js) ───────────────────────────────────────────────
+    // ── Interface (explorer.js) ───────────────────────────────────────────────
     copied: 'Copiado al portapapeles.',
     copyFailed: 'No se ha podido copiar: selecciona el texto y cópialo a mano.',
     copy: 'Copiar',
@@ -498,6 +601,7 @@
     createItem: 'Crear un elemento (POST)',
     preparingForm: 'Preparando el formulario…',
     createIntro: (path, hasSchema) => `Se envía como application/json a ${path}.${hasSchema ? ' Se rellenan los campos obligatorios del esquema y los que tienen default (§4.3).' : ''}`,
+    createMixed: 'Siempre crea un elemento con estos campos, nunca un fichero; los ficheros van por el cuadro de subida (§5.1).',
     idFromServer: 'El servidor asigna el id (§5.1).',
     idFromClient: 'El id lo elige el cliente (id_from "client", §5.1): se rellena uno aleatorio.',
     idFromEither: 'Puedes mandar un id (id_from "either", §5.1); sin él, lo asigna el servidor.',
@@ -506,7 +610,7 @@
     singletonKicker: (p) => `Recurso suelto · ${p}`,
     notRestep1: (v) => `El documento de descubrimiento declara "restep": "${v}", que no es una versión de Restep 1 (§1.1). Este explorador no lo usa como Restep 1 ni supone solo core.`,
     draftNote: (v) => `"${v}" es un borrador o un candidato: puede diferir de la versión publicada y de otros borradores (§1.1).`,
-    experimentalOff: (names, v) => `Se ignoran las partes experimentales anunciadas (${names}): este explorador implementa su texto solo para 1.0-draft.6, y la API declara ${v} (§1.2).`,
+    experimentalOff: (names, v) => `Se ignoran las partes experimentales anunciadas (${names}): este explorador implementa su texto solo para 1.0-draft.7, y la API declara ${v} (§1.2).`,
     announcedOn: (date) => `, anunciada el ${date}`,
     fromHidden: 'Es heredado, de una fuente que no puedes ver.',
     errLinkScheme: (u) => `No se sigue: ${u} usa un esquema que no es https ni el de la raíz de la API (§3).`,

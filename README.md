@@ -80,17 +80,24 @@ paths need their own. `connect-src http: https:` is what allows talking to any A
 - Keyboard support, labels on every control, an `aria-live` region for notices, focus on view
   change, light and dark mode (automatic or chosen), and a mobile layout.
 
-### What it understands from draft 6 (§12.2)
+### What it understands from draft 7 (§12.2)
 
-- **Version** (§1.1): `restep` must follow the grammar (`1.0`, `1.0-draft.6`, `1.0-rc.1`…) with
+- **Version** (§1.1): `restep` must follow the grammar (`1.0`, `1.0-draft.7`, `1.0-rc.1`…) with
   major version 1. Otherwise the overview says it is not Restep 1 and offers nothing else (nor
   does it assume plain `core`). With a suffix, it warns that it is a draft or a candidate.
-- **Experimental parts** (§1.2): the explorer implements the draft 6 text of `inherit` and only
-  uses it (read-only effective field when editing, source of `_inherited`) if the API announces
-  the `inherit` extension and declares exactly `"restep": "1.0-draft.6"`. With another version it
+- **Discovery** (§4.2): only a `2xx` whose body is an object with a string `restep` is a
+  discovery document; a `2xx` without one, or a `404`, means `core` only; any other error (a
+  `401`, a `503`) assumes nothing and the overview says so. Of several `service-desc` links it
+  uses the first target that is a discovery document of Restep 1.
+- **Experimental parts** (§1.2): the explorer implements the draft 7 text of `inherit` and only
+  uses it (read-only effective field when editing, source of `_inherited`, inherited items of
+  `inherit_items` marked in lists and read-only, with a link to their `_from`) if the API
+  announces the `inherit` extension and declares exactly `"restep": "1.0-draft.7"`. A field of
+  `inherit`, or an `inherit_items` declaration, with a member it does not know, other than an `x-` one (the
+  server's own), is treated as not inherited. With another version it
   ignores those members and says so in the overview. Of `sync` and `batch` it only shows what
   they declare, without using them.
-- **Unknown values** (§4.2): a filter with an unknown `type` is not offered, only known operators
+- **Unknown values** (§4.2): a filter with an unknown `type` or `quantifier` is not offered, only known operators
   of a filter are offered, a named filter with an unknown `type` is not offered, an action with
   an unknown `on` or `method` (also in `_actions`) is not offered, and a deprecation notice with a
   `kind` that does not match its place is not shown. An unknown `from` in `_inherited` is shown
@@ -98,7 +105,50 @@ paths need their own. `connect-src http: https:` is what allows talking to any A
 - **`id_from`** (§5.1): with `"client"` the starting body for a create carries a random `id`; with
   an unknown value the `id` is always removed before sending; without `id_from` or with `"server"`
   whatever you write is sent (and the server answers `422` if you include an `id`).
-- **Singletons with a template or `parent`** (§5.9): ignored.
+- **Singletons** (§5.9): one under an item (`parent` and a template, such as
+  `/readers/{reader_id}/settings`) is recognised by its path and shown with its parent; one whose
+  path is a template without `parent`, or whose `parent` names nothing, is ignored. A singleton's
+  actions are offered on its page (C-76, C-77).
+- **Effects** (§4.3, §11.1, §13.1): before an unsafe operation (create, upload, `PATCH`, `DELETE`,
+  an unsafe action) it asks for confirmation when the operation declares an effect, and also when
+  it declares `[]` unless you tick "Trust the effects this API declares" in the overview (kept per
+  origin in `localStorage`); a safe action asks only when it declares `charges`. Without
+  `effects`, or with an unknown value, an operation has all three, also a safe action; an
+  undeclared `DELETE` has `["destroys"]`; a singleton's `PATCH` has what its `method_effects`
+  declares (§5.9), and all three where it is undeclared. The cards show each action's and
+  method's effects, a singleton's `PATCH` included.
+- **Filters** (§6.1): `nin`, `prefix`, `contains`, `localdatetime`, `timezone` and
+  `"quantifier": "some"` (shown as "some related item"); a default switch is a ticked box, and
+  unticking it sends `filter[name]=false`; required filters are marked. `null` on a to-many
+  relationship or a list field, declared without `quantifier`, is offered like any other filter.
+  On a list (with or without `"quantifier": "some"`) or a to-many relationship, `null` tests the
+  whole group, never each element: its values read "yes: none" and "no: some", with a hint that,
+  next to other filters on the same list, yes means that no element meets them all at once (§6.1,
+  council round 3, decisions 8 and 9; round 4, 5b); the filters table says so too. A query with two
+  `null` filters on one group (a to-many relationship, also through a path such as `reviews.id`, or
+  a field with `quantifier`) is not sent: the form says the server would answer `invalid_parameter`
+  (round 4, 5a).
+  Values are not checked against their type: an `integer` operand such as `20.0` is valid (§6.1).
+- **Localized fields** (§3, §5.6): marked read-only with their source map, left out of the edit
+  and create bodies; the language of the response (`Content-Language`) is shown.
+- **Uploads** (§5.1): a collection with `upload` gets a file control that checks the media type
+  and `max_size` and sends the bytes with their `Content-Type` and `Content-Disposition`; an item
+  with `_content` links its bytes. `schemas.create` announces creation from JSON, so a collection
+  with `upload` and without it gets no JSON create form, only the file control. In one with both,
+  the JSON form always creates an item, and a JSON file goes as the `file` part of
+  `multipart/form-data`, or is refused before sending where `multipart` is not declared (council
+  round 3, decisions 1 and 2). `*/*` admits any file with a type; in a collection that only takes
+  files, a JSON file goes as its bytes where `media_types` admits it, and a `+json` file is a file
+  like any other; the `file` part always carries a `filename`, `file` when the file has none
+  (round 4, 1a, 1b, 2 and 4b). The curl of an upload shows `--data-binary @name` or `-F file=@name`.
+- **Actions** (§11.1): a `GET` action takes its declared `params`, and none where it declares
+  no `params` (§5.3); after an unsafe action on an item the item is read again, never taken from
+  the response (a replay may carry a stored body, §7.1); a safe action with `output`
+  shows its result as such, not as the item; the create form starts from `GET …:new`
+  (`{"values", "schema"}`) and shows the effective schema.
+- **Collections without `GET`** (§4.3): not listed; only the create form is offered.
+- **Errors** (§5.4): texts for `408`, `421`, `425`, `502` and `504`; any other code, `http_418`
+  included, by the class of its status.
 - **Links** (§3): it does not fetch any URL whose scheme is neither `https` nor the root's;
   relations that carry `href` (mandatory towards a subcollection) are linked through it.
 - **`idempotency.anonymous: false`** (§7.1): without a token, `POST` requests carry no
@@ -119,8 +169,8 @@ paths need their own. `connect-src http: https:` is what allows talking to any A
 
 ## Usage
 
-It is published at <https://restep.wubytes.com/explorer/> (in Spanish,
-<https://restep.wubytes.com/es/explorador/>): nothing to install. To try it locally, from the
+It is published at <https://w3id.org/restep/explorer/> (in Spanish,
+<https://w3id.org/restep/es/explorador/>): nothing to install. To try it locally, from the
 site folder:
 
 ```bash
@@ -172,9 +222,11 @@ node tools/restep-explorer/build.mjs       # from projects/restep
 node tools/restep-explorer/test.mjs
 ```
 
-They test the built version, and fail if `public/` is not up to date with the source.
+They test the version built in memory from the source, and fail if `public/` is not up to date
+with it; with `RESTEP_EXPLORER_UNBUILT=1` that check is reported as omitted instead. With
+`RESTEP_REF=<file>` they run against another copy of the reference server.
 
-- **Pure logic**: the published `explorer-i18n.js` and `explorer-logic.js` are evaluated in Node
+- **Pure logic**: the built `explorer-i18n.js` and `explorer-logic.js` are evaluated in Node
   (vm), in English and Spanish (discovery parsing, paths and templates, query builder and reader,
   minimal merge patch, starting bodies, ETag, relations, translations, `Link`, `curl`, errors and
   texts). The dictionary has the same keys in both languages and every key the code uses.
@@ -183,7 +235,7 @@ They test the built version, and fail if `public/` is not up to date with the so
   and the site header with its nav and language switch; in the JS, no `innerHTML`,
   `setAttribute('style')` or `eval`.
 - **Integration**: copies the reference server to a temporary directory, adds CORS to it (the
-  original is untouched), starts it on `:8840` and serves the pages from `public/` on `:8841`, with
+  original is untouched), starts it on `:8840` and serves the built pages on `:8841`, with
   the CSP above as an HTTP header. It checks the CORS preflight and the logic against the real
   API: queries, pagination with `next`, errors, `PATCH` with `If-Match` (and the `412` with a stale
   ETag), a repeated `POST` with the same `Idempotency-Key`, `DELETE`, the `PATCH` of the `/shop`
@@ -230,14 +282,14 @@ They test the built version, and fail if `public/` is not up to date with the so
   actions, with their method (§11.1). If a server lists another one, the explorer still treats it
   as unsafe and non-idempotent, and gives it an `Idempotency-Key`.
 - **Which text of an experimental part a client implements for `"1.0"`.** §1.2 asks the client
-  to implement "the text of the version the server declares". The explorer only knows the draft 6
+  to implement "the text of the version the server declares". The explorer only knows the draft 7
   text; it cannot know whether the published 1.0 will keep it, so with `"1.0"` it ignores
-  `inherit` (the checker, by contrast, accepts `1.0-draft.6` and `1.0`).
+  `inherit`.
 
 ## Code and issues
 
 Code and issues: <https://github.com/restep-spec/restep-explorer>. That repository is generated from the Restep
-site, where the tool is developed alongside the [specification](https://restep.wubytes.com/1/) and the reference
+site, where the tool is developed alongside the [specification](https://w3id.org/restep/1/) and the reference
 server: `vendor/` and `schema/` are copies from the site so the tests run on their own.
 
 MIT licensed.

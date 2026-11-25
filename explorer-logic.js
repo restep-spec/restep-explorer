@@ -1,10 +1,10 @@
-// Lógica pura del explorador, sin DOM: se puede evaluar en Node (test.mjs la carga en un contexto vm
-// junto con explorer-i18n.js y la prueba en los dos idiomas).
+// Pure explorer logic, without the DOM: it can be evaluated in Node (test.mjs loads it in a vm context
+// together with explorer-i18n.js and tests it in both languages).
 (function () {
   'use strict';
   const L = {};
-  // ── Idioma de los textos ──────────────────────────────────────────────────
-  // El de <html lang> si hay documento; el diccionario es globalThis.RestepI18n (explorer-i18n.js).
+  // ── Language of the texts ──────────────────────────────────────────────────
+  // That of <html lang> if there is a document; the dictionary is globalThis.RestepI18n (explorer-i18n.js).
   const dicts = () => globalThis.RestepI18n || {};
   L.setLang = (lang) => {
     const base = String(lang || '').toLowerCase().split('-')[0];
@@ -12,8 +12,8 @@
     return L.lang;
   };
   L.setLang(globalThis.document?.documentElement?.lang || 'en');
-  // L.t(clave, ...args): el texto en el idioma actual; si es una función, se llama con args.
-  // Si falta en ese idioma, el inglés; si tampoco está, la propia clave (así se nota en pantalla).
+  // L.t(key, ...args): the text in the current language; if it is a function, it is called with args.
+  // If missing in that language, the English one; if that is missing too, the key itself (so it shows on screen).
   L.t = (key, ...args) => {
     const d = dicts();
     const v = d[L.lang]?.[key] ?? d.en?.[key];
@@ -25,8 +25,8 @@
   const strs = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
   L.isObj = isObj;
 
-  // ── URL de la API y rutas ──────────────────────────────────────────────────
-  // La raíz es la URL con la que se configura el cliente; las rutas del descubrimiento son relativas a ella (§2).
+  // ── API URL and paths ──────────────────────────────────────────────────
+  // The root is the URL the client is configured with; the discovery paths are relative to it (§2).
   L.normalizeRoot = (input) => {
     let s = String(input ?? '').trim();
     if (!s) throw new Error(t('errNoUrl'));
@@ -40,8 +40,8 @@
     return u.href;
   };
   L.joinRoot = (root, path) => root.replace(/\/+$/, '') + (String(path).startsWith('/') ? path : '/' + path);
-  // Un enlace de un cuerpo o cabecera (absoluto o ruta absoluta, §3) pasado a ruta relativa a la raíz,
-  // o null si queda fuera de la API (otro origen u otra ruta base).
+  // A link from a body or header (absolute or absolute path, §3) turned into a path relative to the root,
+  // or null if it falls outside the API (another origin or another base path).
   L.toApiPath = (root, href, base) => {
     let u, r;
     try { u = new URL(href, base || root); r = new URL(root); } catch { return null; }
@@ -51,10 +51,10 @@
     return (u.pathname.slice(rp.length) || '/') + u.search;
   };
   L.sameOrigin = (a, b) => { try { return new URL(a).origin === new URL(b).origin; } catch { return false; } };
-  // §3: un cliente no DEBE seguir un enlace cuyo esquema no sea https ni el de la raíz (file:, data:…).
+  // §3: a client MUST NOT follow a link whose scheme is neither https nor the root's (file:, data:…).
   L.allowedScheme = (url, root) => { try { const p = new URL(url).protocol; return p === 'https:' || p === new URL(root).protocol; } catch { return false; } };
 
-  // ── Estado en el hash: #api=<raíz>&path=<ruta con su consulta> ─────────────
+  // ── State in the hash: #api=<root>&path=<path with its query> ─────────────
   const hashEnc = (s) => encodeURIComponent(s).replace(/%2F/gi, '/').replace(/%3A/gi, ':').replace(/%5B/gi, '[')
     .replace(/%5D/gi, ']').replace(/%2C/gi, ',').replace(/%3F/gi, '?').replace(/%3D/gi, '=').replace(/%40/gi, '@');
   L.readHash = (hash) => {
@@ -69,37 +69,65 @@
   };
 
   // ── Descubrimiento (§4.2) ──────────────────────────────────────────────────
-  // Solo es documento de descubrimiento un objeto con un miembro restep de tipo cadena; si no, solo core.
+  // Only an object with a string member restep is a discovery document; otherwise, only core.
   L.isDiscovery = (doc) => isObj(doc) && typeof doc.restep === 'string';
-  // §1.1: la versión, con la gramática de restep. null si no la sigue; draft es true con sufijo.
+  // §1.1: the version, with the grammar of restep. null if it does not follow it; draft is true with a suffix.
   L.restepVersion = (v) => {
     const m = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-(draft|rc)\.(0|[1-9][0-9]*))?$/.exec(typeof v === 'string' ? v : '');
     return m ? { major: Number(m[1]), minor: Number(m[2]), pre: m[3] ?? null, draft: !!m[3] } : null;
   };
-  // §1.2: las partes experimentales solo se usan si restep declara una versión cuyo texto implementa
-  // el explorador; con un borrador, ese mismo. El explorador implementa el de inherit del borrador 6.
-  L.EXPERIMENTAL_TEXTS = ['1.0-draft.6'];
+  // §1.2: the experimental parts are only used if restep declares a version whose text the
+  // explorer implements; with a draft, that same one. The explorer implements the inherit text of draft 7.
+  L.EXPERIMENTAL_TEXTS = ['1.0-draft.7'];
   L.EXPERIMENTAL = ['sync', 'batch', 'filter-expr', 'query-method', 'inherit'];
   L.implementsExperimental = (restep) => L.EXPERIMENTAL_TEXTS.includes(restep);
-  // Valores que el explorador conoce; un filtro, una acción o un aviso con otro se trata como no declarado (§4.2).
-  const FILTER_TYPES = ['string', 'integer', 'number', 'decimal', 'boolean', 'date', 'datetime', 'duration', 'enum'];
-  const FILTER_OPS = ['eq', 'ne', 'lt', 'le', 'gt', 'ge', 'in', 'null'];
+  // Values the explorer knows; a filter, an action or a notice with another one is treated as not declared (§4.2).
+  const FILTER_TYPES = ['string', 'integer', 'number', 'decimal', 'boolean', 'date', 'datetime', 'localdatetime', 'timezone', 'duration', 'enum'];
+  const FILTER_OPS = ['eq', 'ne', 'lt', 'le', 'gt', 'ge', 'in', 'nin', 'null', 'prefix', 'contains'];
+  // 11.1 and 4.3: effects. Without effects, or with a value the explorer does not know, an operation
+  // has all three; a DELETE that method effects do not declare has ["destroys"].
+  L.EFFECTS = ['destroys', 'external', 'charges'];
+  L.effectsOf = (list) => (Array.isArray(list) && list.every((e) => L.EFFECTS.includes(e)) ? [...new Set(list)] : [...L.EFFECTS]);
+  L.methodEffects = (declared, method) => (isObj(declared) && Object.hasOwn(declared, method) ? L.effectsOf(declared[method])
+    : method === 'DELETE' ? ['destroys'] : [...L.EFFECTS]);
+  // A safe action may declare only charges; one that declares nothing has no effect to confirm.
+  L.actionEffects = (a) => (a?.safe && a.effects === undefined ? [] : L.effectsOf(a?.effects));
+  // 11.1 and 13.1: confirm before any declared effect, and before [] unless the server is trusted; a safe
+  // operation only when it declares an effect.
+  L.needsConfirm = (effects, { safe = false, trusted = false } = {}) => effects.length > 0 || (!safe && !trusted);
+  // 11.6: the members of an inherit field and of inherit_items the explorer knows; a declaration with
+  // any other member whose name does not start with x- (the server's own, 4.2), or a value it does not
+  // know, is treated as not inherited.
+  const INHERIT_MEMBERS = ['own', 'from', 'default', 'description', 'combine', 'switch'];
+  const knownMember = (allowed) => (k) => allowed.includes(k) || k.startsWith('x-');
+  const knownSwitch = (s) => s === undefined || (isObj(s) && typeof s.field === 'string');
+  L.knownInherit = (i) => isObj(i) && typeof i.own === 'string' && Object.keys(i).every(knownMember(INHERIT_MEMBERS))
+    && [undefined, 'replace', 'fields'].includes(i.combine) && knownSwitch(i.switch);
+  L.knownInheritItems = (i) => isObj(i) && Object.keys(i).every(knownMember(['from', 'key', 'switch'])) && knownSwitch(i.switch);
+  // 4.2: a 2xx whose body is a JSON object with a string restep is a discovery document; a 2xx without
+  // one, or a 404, means core only; any other error says nothing about the profiles.
+  L.discoveryOutcome = (status, body) => {
+    if (status >= 200 && status < 300 && L.isDiscovery(body)) return L.parseDiscovery(body);
+    if ((status >= 200 && status < 300) || status === 404) return L.parseDiscovery(null);
+    return { restep: null, version: '', profiles: [], extensions: [], collections: [], singletons: [], deprecations: [], coreOnly: false, unavailable: true, raw: null };
+  };
+  L.isRestep1 = (doc) => L.isDiscovery(doc) && L.restepVersion(doc.restep)?.major === 1;
   const KINDS_ROOT = ['version', 'profile', 'extension', 'collection', 'singleton', 'reason'];
   const KINDS_COLL = ['field', 'filter', 'operator', 'value', 'sort', 'relation', 'include', 'count', 'max_limit', 'action', 'method', 'item_method'];
-  const KINDS_SINGLETON = ['field', 'method'];
+  const KINDS_SINGLETON = ['field', 'method', 'action'];
   const notices = (v, kinds) => (Array.isArray(v) ? v.filter((x) => isObj(x) && kinds.includes(x.kind)) : []);
-  // §5.1: quién elige el id. null: falta (lo asigna el servidor); 'unknown': un valor que no se conoce.
+  // §5.1: who chooses the id. null: missing (the server assigns it); 'unknown': a value that is not known.
   const idFrom = (v) => (v === undefined ? null : ['server', 'client', 'either'].includes(v) ? v : 'unknown');
   L.parseDiscovery = (doc) => {
     if (!L.isDiscovery(doc)) return { restep: null, version: '', profiles: ['core'], extensions: [], collections: [], singletons: [], deprecations: [], coreOnly: true, raw: doc ?? null };
-    // §1.1: con una versión mayor que no es 1, o sin la gramática, no es un descubrimiento de Restep 1,
-    // y tampoco se supone core: esa API no se puede usar como Restep 1.
+    // §1.1: with a major version other than 1, or without the grammar, it is not a Restep 1 discovery,
+    // and core is not assumed either: that API cannot be used as Restep 1.
     const ver = L.restepVersion(doc.restep);
     if (!ver || ver.major !== 1) return { restep: doc.restep, version: '', profiles: [], extensions: [], collections: [], singletons: [], deprecations: [], coreOnly: false, notRestep1: true, raw: doc };
     const obj = (v) => (isObj(v) ? v : {});
     const extensions = [...new Set(strs(doc.extensions))];
-    // inherit (§11.6) es experimental: sin la extensión anunciada o con una versión cuyo texto no se
-    // implementa, sus miembros se ignoran.
+    // inherit (§11.6) is experimental: without the extension announced or with a version whose text is not
+    // implemented, its members are ignored.
     const useInherit = extensions.includes('inherit') && L.implementsExperimental(doc.restep);
     const profiles = [...new Set(strs(doc.profiles))];
     if (!profiles.includes('core')) profiles.unshift('core');
@@ -110,15 +138,20 @@
       collections.push({
         name, path: c.path, vars, templated: vars.length > 0,
         description: str(c.description),
-        methods: Array.isArray(c.methods) ? strs(c.methods) : null, // ausente: no se sabe (§4.3)
+        methods: Array.isArray(c.methods) ? strs(c.methods) : null, // absent: unknown (§4.3)
         itemMethods: Array.isArray(c.item_methods) ? strs(c.item_methods) : null,
         schemas: obj(c.schemas),
-        filters: Object.entries(obj(c.filter)).filter(([, f]) => isObj(f) && FILTER_TYPES.includes(f.type)).map(([field, f]) => ({
+        // 6.1: a filter whose quantifier is not known is not used; an operator not known is dropped alone.
+        filters: Object.entries(obj(c.filter)).filter(([, f]) => isObj(f) && FILTER_TYPES.includes(f.type) && [undefined, 'some'].includes(f.quantifier)).map(([field, f]) => ({
           field, type: f.type, values: strs(f.values), ops: strs(f.ops).filter((o) => FILTER_OPS.includes(o)), description: str(f.description),
+          quantifier: f.quantifier ?? null, required: f.required === true,
+          // 6.1 (council, round 3, decisions 8 and 9): null on a list or a to-many relationship tests the whole group.
+          group: f.quantifier === 'some' || (isObj(obj(c.relations)[field]) && obj(c.relations)[field].many === true),
         })).filter((f) => f.ops.length),
-        // §6.1: filtros con nombre; type null es un interruptor, que no lleva valor. Con un type desconocido, no se usa.
+        // §6.1: named filters; type null is a switch, which carries no value. With an unknown type, it is not used.
         named: Object.entries(obj(c.named_filters)).filter(([, f]) => isObj(f) && (f.type === undefined || FILTER_TYPES.includes(f.type))).map(([name, f]) => ({
           name, type: str(f.type) || null, values: strs(f.values), description: str(f.description),
+          default: f.type === undefined && f.default === true, required: f.required === true,
         })),
         idFrom: idFrom(c.id_from),
         sort: strs(c.sort),
@@ -131,31 +164,40 @@
         })),
         includeDepth: Number.isInteger(c.include_depth) && c.include_depth >= 1 ? c.include_depth : 1,
         languageMaps: Object.keys(obj(c.language_maps)),
-        inherit: Object.entries(useInherit ? obj(c.inherit) : {}).filter(([, i]) => isObj(i)).map(([field, i]) => ({
+        // 3: localized fields, read-only, with the language map each one comes from.
+        localized: Object.fromEntries(Object.entries(obj(c.localized)).filter(([, d]) => isObj(d) && typeof d.source === 'string').map(([f, d]) => [f, d.source])),
+        inherit: Object.entries(useInherit ? obj(c.inherit) : {}).filter(([, i]) => L.knownInherit(i)).map(([field, i]) => ({
           field, own: str(i.own), from: strs(i.from), default: i.default === true, description: str(i.description),
+          switchField: isObj(i.switch) ? i.switch.field : null,
         })),
-        // §4.2: una acción con un on o un method desconocidos se trata como no declarada.
-        actions: Object.entries(obj(c.actions)).filter(([, a]) => isObj(a) && ['item', 'collection'].includes(a.on) && [undefined, 'GET', 'POST'].includes(a.method)).map(([aname, a]) => ({
-          name: aname, on: a.on, safe: a.safe === true, idempotent: a.idempotent === true,
-          method: a.method === 'GET' ? 'GET' : 'POST', description: str(a.description), input: a.input ?? null,
-        })),
+        inheritItems: useInherit && L.knownInheritItems(c.inherit_items) ? { from: strs(c.inherit_items.from), key: strs(c.inherit_items.key), switchField: isObj(c.inherit_items.switch) ? c.inherit_items.switch.field : null } : null,
+        // 5.1: a collection that takes files.
+        upload: isObj(c.upload) ? { mediaTypes: strs(c.upload.media_types), maxSize: Number.isInteger(c.upload.max_size) && c.upload.max_size > 0 ? c.upload.max_size : null, multipart: c.upload.multipart === true } : null,
+        methodEffects: obj(c.method_effects), itemMethodEffects: obj(c.item_method_effects),
+        actions: L.parseActions(c.actions, false),
         sync: isObj(c.sync) ? c.sync : null,
         deprecations: notices(c.deprecations, KINDS_COLL),
       });
     }
-    // §5.9: recursos sueltos. Uno con una plantilla en path o con parent se ignora (formas reservadas).
+    // 5.9: singletons. One whose path is a template without parent, or whose parent names no collection
+    // or singleton of the document, is ignored; one with parent hangs from an item or another singleton.
     const singletons = [];
+    const parents = new Set([...Object.keys(obj(doc.collections)), ...Object.keys(obj(doc.singletons))]);
     for (const [name, sg] of Object.entries(obj(doc.singletons))) {
-      if (!isObj(sg) || typeof sg.path !== 'string' || !sg.path.startsWith('/') || /[{}]/.test(sg.path) || Object.hasOwn(sg, 'parent')) continue;
+      if (!isObj(sg) || typeof sg.path !== 'string' || !sg.path.startsWith('/')) continue;
+      if (sg.parent === undefined ? /[{}]/.test(sg.path) : typeof sg.parent !== 'string' || sg.parent === name || !parents.has(sg.parent)) continue;
+      const vars = L.templateVars(sg.path);
       singletons.push({
-        name, path: sg.path, description: str(sg.description),
+        name, path: sg.path, vars, templated: vars.length > 0, parent: typeof sg.parent === 'string' ? sg.parent : null, description: str(sg.description),
         methods: Array.isArray(sg.methods) ? strs(sg.methods).filter((m) => m === 'GET' || m === 'PATCH') : null,
-        schemas: obj(sg.schemas), deprecations: notices(sg.deprecations, KINDS_SINGLETON),
+        schemas: obj(sg.schemas), deprecations: notices(sg.deprecations, KINDS_SINGLETON), actions: L.parseActions(sg.actions, true),
+        // 4.3 and 5.9: the effects of its PATCH; undeclared, all three (L.methodEffects).
+        methodEffects: obj(sg.method_effects),
       });
     }
     return {
       restep: doc.restep, draft: ver.draft, version: str(doc.version), profiles, extensions, collections, singletons,
-      // Partes experimentales anunciadas cuyo texto no implementa el explorador para esta versión (§1.2).
+      // Announced experimental parts whose text the explorer does not implement for this version (§1.2).
       experimentalIgnored: L.implementsExperimental(doc.restep) ? [] : [...profiles, ...extensions].filter((x) => L.EXPERIMENTAL.includes(x)),
       status: str(doc.status), events: str(doc.events), batch: isObj(doc.batch) ? doc.batch : null,
       idempotencyTtl: isObj(doc.idempotency) && Number.isInteger(doc.idempotency.ttl) ? doc.idempotency.ttl : null,
@@ -163,13 +205,24 @@
       deprecations: notices(doc.deprecations, KINDS_ROOT), coreOnly: false, raw: doc,
     };
   };
+  // 11.1: actions of a collection (with on) or of a singleton (without on); one with an on or a method the
+  // explorer does not know is treated as not declared.
+  L.parseActions = (acts, singleton) => Object.entries(isObj(acts) ? acts : {})
+    .filter(([, a]) => isObj(a) && (singleton ? a.on === undefined : ['item', 'collection'].includes(a.on)) && [undefined, 'GET', 'POST'].includes(a.method))
+    .map(([aname, a]) => ({
+      name: aname, on: singleton ? 'singleton' : a.on, safe: a.safe === true, idempotent: a.idempotent === true,
+      method: a.method === 'GET' ? 'GET' : 'POST', description: str(a.description), input: a.input ?? null,
+      effects: a.effects, params: Object.entries(isObj(a.params) ? a.params : {}).filter(([, p]) => isObj(p)).map(([pname, p]) => ({
+        name: pname, type: str(p.type), list: p.list === true, required: p.required === true, description: str(p.description),
+      })), output: a.output ?? null,
+    }));
   L.has = (disc, name) => !!disc && (disc.profiles.includes(name) || disc.extensions.includes(name));
   L.collection = (disc, name) => disc?.collections.find((c) => c.name === name) ?? null;
   L.singleton = (disc, name) => disc?.singletons?.find((s) => s.name === name) ?? null;
-  // Una lista de métodos declarada es exacta; si falta, no se sabe y se ofrece la operación (§4.3).
+  // A declared list of methods is exact; if missing, it is unknown and the operation is offered (§4.3).
   L.allows = (list, method) => list === null || list === undefined || list.includes(method);
 
-  // ── Plantillas de ruta (RFC 6570, solo {var}) ──────────────────────────────
+  // ── Path templates (RFC 6570, only {var}) ──────────────────────────────
   L.templateVars = (t) => [...String(t).matchAll(/\{([^}]*)\}/g)].map((m) => m[1]);
   const reEsc = (s) => s.replace(/[.*+?^$()|[\]\\]/g, '\\$&');
   L.templateSource = (t) => String(t).split(/\{[^}]*\}/).map(reEsc).join('([^/]+)');
@@ -180,10 +233,10 @@
       return encodeURIComponent(values[i++]);
     });
   };
-  // La ruta de un elemento: la de su colección expandida, sin / final, seguida de / e id (§5.1).
+  // The path of an item: that of its expanded collection, without a trailing /, followed by / and the id (§5.1).
   L.itemPath = (coll, values, id) => L.expandTemplate(coll.path, values).replace(/\/+$/, '') + '/' + encodeURIComponent(id);
 
-  // Qué es una ruta: la raíz, una colección, un elemento o algo desconocido.
+  // What a path is: the root, a collection, an item or something unknown.
   L.matchPath = (disc, path) => {
     const s = String(path || '/');
     const q = s.indexOf('?');
@@ -191,9 +244,14 @@
     const query = q < 0 ? '' : s.slice(q + 1);
     if (pathname === '/') return { kind: 'root', pathname, query };
     const dec = (x) => { try { return decodeURIComponent(x); } catch { return x; } };
-    // Un recurso suelto tiene una ruta fija que no puede ser la de una colección ni la de un elemento (§5.9).
-    const sg = (disc?.singletons ?? []).find((x) => x.path.replace(/\/+$/, '') === pathname.replace(/\/+$/, ''));
-    if (sg) return { kind: 'singleton', singleton: sg, pathname, query };
+    // A singleton has a fixed path that cannot be that of a collection or an item (§5.9).
+    const sg = (disc?.singletons ?? []).find((x) => !x.templated && x.path.replace(/\/+$/, '') === pathname.replace(/\/+$/, ''));
+    if (sg) return { kind: 'singleton', singleton: sg, values: [], pathname, query };
+    // 5.9: a singleton under an item: its template expanded with the ids of the parent items.
+    for (const t of (disc?.singletons ?? []).filter((x) => x.templated)) {
+      const m = new RegExp(`^${L.templateSource(t.path.replace(/\/+$/, ''))}/?$`).exec(pathname);
+      if (m) return { kind: 'singleton', singleton: t, values: m.slice(1).map(dec), pathname, query };
+    }
     const colls = [...(disc?.collections ?? [])].sort((a, b) => b.path.length - a.path.length);
     for (const coll of colls) {
       const src = L.templateSource(coll.path.replace(/\/+$/, ''));
@@ -208,11 +266,11 @@
     return { kind: 'unknown', pathname, query };
   };
 
-  // ── Consulta (§6): del formulario a la URL y de vuelta ─────────────────────
-  // Corchetes y comas sin codificar, para que la URL se lea; el servidor la descodifica igual.
+  // ── Query (§6): from the form to the URL and back ─────────────────────
+  // Brackets and commas unencoded, so the URL reads well; the server decodes it the same.
   L.encodeQueryPart = (s) => encodeURIComponent(String(s)).replace(/%5B/gi, '[').replace(/%5D/gi, ']').replace(/%2C/gi, ',');
   L.emptyQuery = () => ({ filters: [], named: {}, sort: [], fields: [], include: [], limit: '', count: false, cursor: '', extra: [] });
-  // Con la colección, filter[nombre] de uno de sus filtros con nombre (§6.1) va a q.named.
+  // With the collection, filter[name] of one of its named filters (§6.1) goes to q.named.
   L.parseQuery = (qs, coll = null) => {
     const q = L.emptyQuery();
     const named = new Set((coll?.named ?? []).map((n) => n.name));
@@ -225,11 +283,11 @@
       else if (k === 'limit') q.limit = v;
       else if (k === 'count') q.count = v === 'true';
       else if (k === 'cursor') q.cursor = v;
-      else q.extra.push([k, v]); // filter=… (filter-expr), parámetros propios de la API: se conservan
+      else q.extra.push([k, v]); // filter=… (filter-expr), the API's own parameters: kept
     }
     return q;
   };
-  // filter[campo]=v es lo mismo que filter[campo][eq]=v (§6.1): se usa la forma corta.
+  // filter[field]=v is the same as filter[field][eq]=v (§6.1): the short form is used.
   L.buildQuery = (q, { keepCursor = false } = {}) => {
     const p = [];
     for (const f of q.filters ?? []) {
@@ -237,7 +295,7 @@
       const value = Array.isArray(f.value) ? f.value.join(',') : String(f.value ?? '');
       p.push([f.op === 'eq' ? `filter[${f.field}]` : `filter[${f.field}][${f.op}]`, value]);
     }
-    // Un filtro con nombre no lleva operador; un interruptor va sin valor (§6.1). null: no se aplica.
+    // A named filter has no operator; a switch goes without a value (§6.1). null: not applied.
     for (const [name, v] of Object.entries(q.named ?? {})) if (v !== null && v !== undefined) p.push([`filter[${name}]`, String(v)]);
     const sort = (q.sort ?? []).filter((s) => s && s.field).map((s) => (s.desc ? '-' : '') + s.field).join(',');
     if (sort) p.push(['sort', sort]);
@@ -251,22 +309,25 @@
   };
   L.withQuery = (pathname, qs) => (qs ? `${pathname}?${qs}` : pathname);
 
-  // Nombre legible de un operador de filtro (§6.1), o null si no es uno de los de Restep.
+  // Readable name of a filter operator (§6.1), or null if it is not one of Restep's.
   L.opLabel = (op) => { const o = t('ops'); return isObj(o) && Object.hasOwn(o, op) ? o[op] : null; };
-  // El control para el valor de un filtro, según su tipo y operador (§4.2, §6.1).
+  // The control for a filter's value, by its type and operator (§4.2, §6.1).
   L.valueControl = (filter, op) => {
+    // 6.1 (council, round 3, decision 9): on a group, null tests the whole list, never each element.
+    if (op === 'null' && filter.group) return { kind: 'select', options: [['true', t('nullGroupYes')], ['false', t('nullGroupNo')]], hint: t('nullGroupHint') };
     if (op === 'null') return { kind: 'select', options: [['true', t('nullYes')], ['false', t('nullNo')]] };
     if (filter.type === 'boolean') return { kind: 'select', options: [['true', 'true'], ['false', 'false']] };
-    if (filter.type === 'enum' && op !== 'in' && filter.values.length) return { kind: 'select', options: filter.values.map((v) => [v, v]) };
-    const ph = { integer: '42', number: '4.5', decimal: '18.50', date: '2026-11-12', datetime: '2026-11-12T09:30:00Z', duration: 'PT90S' }[filter.type] ?? '';
-    if (op === 'in') {
+    if (filter.type === 'enum' && op !== 'in' && op !== 'nin' && filter.values.length) return { kind: 'select', options: filter.values.map((v) => [v, v]) };
+    const ph = { integer: '42', number: '4.5', decimal: '18.50', date: '2026-11-12', datetime: '2026-11-12T09:30:00Z', localdatetime: '2027-03-30T19:00:00', timezone: 'Europe/Madrid', duration: 'PT1.5S' }[filter.type] ?? '';
+    if (op === 'in' || op === 'nin') {
       const sample = filter.type === 'enum' ? filter.values.slice(0, 2) : ph ? [ph, ph] : ['a', 'b'];
       return { kind: 'input', type: 'text', inputmode: null, placeholder: sample.join(','), hint: t('hintIn') };
     }
     return {
       kind: 'input', type: filter.type === 'date' ? 'date' : 'text', placeholder: ph,
       inputmode: filter.type === 'integer' ? 'numeric' : filter.type === 'number' || filter.type === 'decimal' ? 'decimal' : null,
-      hint: filter.type === 'decimal' ? t('hintDecimal') : filter.type === 'datetime' ? t('hintDatetime') : filter.type === 'duration' ? t('hintDuration') : '',
+      hint: filter.type === 'decimal' ? t('hintDecimal') : filter.type === 'datetime' ? t('hintDatetime') : filter.type === 'duration' ? t('hintDuration')
+        : filter.type === 'localdatetime' ? t('hintLocalDatetime') : filter.type === 'timezone' ? t('hintTimezone') : op === 'prefix' || op === 'contains' ? t('hintNotEmpty') : '',
     };
   };
 
@@ -274,8 +335,8 @@
   const canonical = (v) => (Array.isArray(v) ? `[${v.map(canonical).join(',')}]`
     : isObj(v) ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}` : JSON.stringify(v));
   L.jsonEqual = (a, b) => canonical(a) === canonical(b);
-  // El merge patch (RFC 7396) que lleva de a a b: lo quitado va a null, lo igual no va.
-  // Los campos de whole (relaciones, §5.1) se mandan enteros: un objeto de relación no se fusiona.
+  // The merge patch (RFC 7396) that takes a to b: what was removed goes to null, what is equal is left out.
+  // The whole fields (relations, §5.1) are sent whole: a relation object is not merged.
   L.mergeDiff = (a, b, whole = []) => {
     const out = {};
     for (const k of Object.keys(a)) if (!Object.hasOwn(b, k)) out[k] = null;
@@ -285,15 +346,16 @@
     }
     return out;
   };
-  // Lo que se puede editar de un elemento: sin id, sin miembros _ y sin campos efectivos heredados (§11.6).
+  // What can be edited of an item: no id, no _ members and no inherited effective fields (§11.6).
+  // Localized fields (3) are read-only too: their language map is what is written.
   L.editableCopy = (coll, item) => {
-    const ro = new Set(['id', ...(coll?.inherit ?? []).map((i) => i.field)]);
+    const ro = new Set(['id', ...(coll?.inherit ?? []).map((i) => i.field), ...Object.keys(coll?.localized ?? {})]);
     const s = coll?.schemas?.item;
     if (isObj(s) && isObj(s.properties)) for (const [k, p] of Object.entries(s.properties)) if (isObj(p) && p.readOnly === true) ro.add(k);
     return Object.fromEntries(Object.entries(isObj(item) ? item : {}).filter(([k]) => !k.startsWith('_') && !ro.has(k)));
   };
-  // Un cuerpo de partida a partir de un esquema JSON (§4.3): los miembros obligatorios con un valor de
-  // su tipo y los opcionales con default, en el orden de properties, que es el de presentación.
+  // A starting body from a JSON schema (§4.3): the required members with a value of
+  // their type and the optional ones with default, in the order of properties, which is the display order.
   L.skeleton = (schema) => {
     if (!isObj(schema) || !isObj(schema.properties)) return {};
     const required = new Set(strs(schema.required));
@@ -307,7 +369,7 @@
   };
   L.placeholder = (s) => {
     if (!isObj(s)) return null;
-    if (Object.hasOwn(s, 'default')) return s.default; // la anotación va en la propiedad, fuera del anyOf
+    if (Object.hasOwn(s, 'default')) return s.default; // the annotation goes on the property, outside the anyOf
     for (const alt of [s.anyOf, s.oneOf]) {
       if (!Array.isArray(alt)) continue;
       const first = alt.find((a) => isObj(a) && a.type !== 'null');
@@ -326,9 +388,9 @@
       default: return null;
     }
   };
-  // Los campos de un formulario, en el orden de properties (§4.3): etiqueta (title), ayuda
-  // (description), si es obligatorio, default, ejemplos, opciones (enum, u oneOf de const con title)
-  // y el tipo y el formato del primer tipo no nulo de un anyOf.
+  // The fields of a form, in the order of properties (§4.3): label (title), help
+  // (description), whether required, default, examples, options (enum, or oneOf of const with title)
+  // and the type and format of the first non-null type of an anyOf.
   L.formFields = (schema) => {
     if (!isObj(schema) || !isObj(schema.properties)) return [];
     const required = new Set(strs(schema.required));
@@ -349,10 +411,73 @@
       };
     });
   };
-  // La acción new de una colección (apéndice B, propuesta): GET colección:new da el cuerpo de un alta ya relleno.
+  // 11.1: a collection's action new, safe and with GET, gives {"values", "schema"}: the starting values of
+  // a new item and an effective schema, advisory (the POST still decides).
   L.newAction = (disc, coll) => (L.has(disc, 'actions')
-    ? coll?.actions.find((a) => a.name === 'new' && a.on === 'collection' && a.method === 'GET') ?? null : null);
-  // Idempotency-Key: una cadena de Structured Fields (RFC 9651), entre comillas (§7.1).
+    ? coll?.actions.find((a) => a.name === 'new' && a.on === 'collection' && a.method === 'GET' && a.safe) ?? null : null);
+  L.newStart = (result) => (isObj(result) ? { values: isObj(result.values) ? result.values : {}, schema: isObj(result.schema) ? result.schema : null } : null);
+  // 11.1: the query of a GET action from the values of its declared params. A list takes values
+  // separated by commas, none of which may contain one. Returns { query } or { error, param }.
+  L.actionQuery = (params, values) => {
+    const out = [];
+    for (const p of params ?? []) {
+      const raw = String(values?.[p.name] ?? '').trim();
+      if (raw === '') { if (p.required) return { error: 'required', param: p.name }; continue; }
+      out.push(`${L.encodeQueryPart(p.name)}=${L.encodeQueryPart(raw)}`);
+    }
+    return { query: out.join('&') };
+  };
+  // 5.1 (council, round 3, decision 1): schemas.create announces creation from JSON; a collection with upload
+  // and without it only takes files.
+  L.createsFromJson = (coll) => !coll.upload || Object.hasOwn(coll.schemas, 'create');
+  // 5.1 (decision 2): how a file goes to a collection: as its bytes ('raw') or, a JSON file to one that creates items
+  // from JSON, as the file part of multipart/form-data ('multipart'), which needs "multipart": true ('none' without it).
+  L.uploadMode = (coll, file) => {
+    const type = String(file?.type ?? '').toLowerCase().split(';')[0].trim();
+    if (type !== 'application/json' || !L.createsFromJson(coll)) return 'raw';
+    return coll.upload?.multipart ? 'multipart' : 'none';
+  };
+  // 5.1: whether a file fits a collection's upload: one of its media types (* matches any subtype) and
+  // no larger than max_size. Returns null or the reason: 'type' or 'size'.
+  L.uploadProblem = (upload, file) => {
+    if (!upload) return 'type';
+    const type = String(file?.type ?? '').toLowerCase().split(';')[0].trim();
+    // Council, round 4, decision 2: */* admits every media type.
+    const ok = upload.mediaTypes.some((m) => { const [a, b] = m.toLowerCase().split('/'); const [x, y] = type.split('/'); return (a === '*' && b === '*' && !!type) || (a === x && (b === '*' || b === y)); });
+    if (!ok) return 'type';
+    if (upload.maxSize !== null && Number(file?.size) > upload.maxSize) return 'size';
+    return null;
+  };
+  // 5.1 (council, round 4, decision 4b): the file part of multipart/form-data always carries a filename, a generic
+  // one when the file has no name.
+  L.multipartFileName = (file) => (typeof file?.name === 'string' && file.name !== '' ? file.name : 'file');
+  // 6.1 (council, round 4, decision 5a): the group a filter joins (a to-many relationship, its own or the first step
+  // of a path, or a field declared with quantifier), and the first group that two null filters would share, which
+  // the server answers with invalid_parameter. null when there is none.
+  L.filterGroup = (coll, field) => {
+    const seg = String(field ?? '').split('.')[0];
+    if ((coll?.relations ?? []).some((r) => r.name === seg && r.many)) return seg;
+    return (coll?.filters ?? []).some((f) => f.field === field && f.quantifier) ? field : null;
+  };
+  L.nullGroupClash = (coll, filters) => {
+    const seen = new Set();
+    for (const f of filters ?? []) {
+      const g = f && f.op === 'null' ? L.filterGroup(coll, f.field) : null;
+      if (g === null) continue;
+      if (seen.has(g)) return g;
+      seen.add(g);
+    }
+    return null;
+  };
+  // 5.1: Content-Disposition with the file's name (RFC 6266), with filename* for names outside ASCII.
+  L.contentDisposition = (name) => {
+    const n = String(name ?? '');
+    const ascii = n.replace(/[^\x20-\x7e]|["\\]/g, '_');
+    return /^[\x20-\x7e]*$/.test(n) && !/["\\]/.test(n) ? `attachment; filename="${n}"` : `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(n)}`;
+  };
+  // 11.6: an item of a subcollection with inherit_items that carries _from is inherited and read-only.
+  L.inheritedItemSource = (coll, item) => (coll?.inheritItems && isObj(item?._from) && typeof item._from.href === 'string' ? item._from.href : null);
+  // Idempotency-Key: a Structured Fields string (RFC 9651), in quotes (§7.1).
   L.newIdempotencyKey = () => {
     const c = globalThis.crypto;
     let id;
@@ -366,12 +491,13 @@
     }
     return `"${id}"`;
   };
-  // §5.1: el cuerpo de un POST según id_from. El de partida lleva id solo con "client" (uno aleatorio,
-  // §13.6). Al enviar, con un valor desconocido de id_from el id se quita siempre (un cliente no DEBE
-  // mandarlo); sin id_from o con "server" se deja lo que escriba el usuario, y el servidor responde 422.
+  // §5.1: the body of a POST according to id_from. The starting one has an id only with "client" (a random one,
+  // §13.6). When sending, with an unknown id_from value the id is always removed (a client MUST NOT
+  // send it); without id_from or with "server" what the user types is kept, and the server answers 422.
   L.newId = () => L.newIdempotencyKey().slice(1, -1);
   L.createSkeleton = (coll, schema) => {
     const out = L.skeleton(schema);
+    for (const f of Object.keys(coll?.localized ?? {})) delete out[f];
     const { id, ...rest } = out;
     return coll?.idFrom === 'client' ? { id: L.newId(), ...rest } : rest;
   };
@@ -381,7 +507,7 @@
     const { id, ...rest } = body;
     return rest;
   };
-  // §11.6: de dónde sale un campo efectivo según _inherited. 'own' si no está; un from desconocido es 'hidden'.
+  // §11.6: where an effective field comes from according to _inherited. 'own' if it is absent; an unknown from is 'hidden'.
   L.inheritedFrom = (inherited, field) => {
     const why = isObj(inherited) ? inherited[field] : undefined;
     if (why === undefined) return { kind: 'own' };
@@ -390,12 +516,12 @@
     if (isObj(from) && typeof from.href === 'string' && from.href) return { kind: 'href', href: from.href };
     return { kind: 'hidden' };
   };
-  // La ETag de elemento: _etag si la trae (con fields o include, §7.2), si no la cabecera ETag de una lectura completa.
+  // The item's ETag: _etag if it has one (with fields or include, §7.2), otherwise the ETag header of a full read.
   L.itemEtag = (item, headerEtag, partial) => (isObj(item) && typeof item._etag === 'string' ? item._etag : partial ? null : headerEtag || null);
 
   // ── Relaciones (§3, §9) ────────────────────────────────────────────────────
-  // Para cada relación declarada: enlaces navegables a los elementos relacionados o a su subcolección.
-  // Con root, un objeto que trae href (obligatorio hacia una subcolección, §3) se enlaza por él.
+  // For each declared relation: navigable links to the related items or to their subcollection.
+  // With root, an object that carries href (required towards a subcollection, §3) is linked through it.
   L.relationLinks = (disc, coll, values, item, root) => {
     const out = [];
     for (const rel of coll?.relations ?? []) {
@@ -417,9 +543,9 @@
     }
     return out;
   };
-  // §9: las rutas de include que se pueden pedir en una colección, hasta su include_depth: cada tramo
-  // es una relación declarada con "include": true; una relación a varias colecciones solo va al final,
-  // porque el explorador no sabe qué relaciones seguir después de ella.
+  // §9: the include paths that can be requested on a collection, up to its include_depth: each segment
+  // is a declared relation with "include": true; a relation to several collections only goes last,
+  // because the explorer does not know which relations to follow after it.
   L.includePaths = (disc, coll) => {
     const out = [];
     const walk = (c, prefix, depth, seen) => {
@@ -435,7 +561,7 @@
     walk(coll, '', coll?.includeDepth ?? 1, new Set());
     return out;
   };
-  // Subcolecciones de un elemento que no salen como relación: plantillas que cuelgan de la ruta de su colección.
+  // Subcollections of an item that do not appear as a relation: templates that hang from its collection's path.
   L.subcollections = (disc, coll, values, id) => {
     const base = coll.path.replace(/\/+$/, '') + '/{';
     const used = new Set((coll.relations ?? []).map((r) => r.path).filter(Boolean));
@@ -449,8 +575,8 @@
     const qp = params.find((p) => /^q=/i.test(p));
     return { range: range.toLowerCase(), q: qp ? Number(qp.slice(2)) : 1, i };
   }).filter((r) => r.range && r.range !== '*' && r.q > 0 && !Number.isNaN(r.q)).sort((a, b) => b.q - a.q || a.i - b.i).map((r) => r.range);
-  // Qué traducción mostrar de un mapa de idioma: la preferida que exista (recortando la etiqueta),
-  // si no otra del mismo idioma, si no la primera. Nunca se inventa una que falta.
+  // Which translation to show from a language map: the preferred one that exists (trimming the tag),
+  // otherwise another of the same language, otherwise the first. A missing one is never invented.
   L.pickTranslation = (map, prefs) => {
     if (!isObj(map)) return null;
     const keys = Object.keys(map);
@@ -482,7 +608,7 @@
   L.resourceMetadata = (wwwAuthenticate) => /resource_metadata="([^"]+)"/i.exec(String(wwwAuthenticate ?? ''))?.[1] ?? null;
 
   // ── curl ───────────────────────────────────────────────────────────────────
-  // El token nunca sale en el comando: se cambia por $RESTEP_TOKEN.
+  // The token never appears in the command: it is replaced by $RESTEP_TOKEN.
   L.toCurl = ({ method = 'GET', url, headers = {}, body }) => {
     const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
     const parts = ['curl', '-i'];
@@ -494,13 +620,17 @@
       if (/^authorization$/i.test(k)) parts.push('-H', /^bearer /i.test(v) ? '"Authorization: Bearer $RESTEP_TOKEN"' : '"Authorization: $RESTEP_AUTHORIZATION"');
       else parts.push('-H', q(`${k}: ${v}`));
     }
-    if (body !== undefined && body !== null) parts.push('--data-raw', q(body));
+    // 5.1: a file goes as its bytes, or as the file part of multipart/form-data.
+    const kind = Object.prototype.toString.call(body);
+    if (kind === '[object FormData]') for (const [k, v] of body) parts.push('-F', q(`${k}=@${v?.name || 'file'};type=${v?.type || 'application/octet-stream'}`));
+    else if (kind === '[object File]' || kind === '[object Blob]') parts.push('--data-binary', q(`@${body.name || 'file'}`));
+    else if (body !== undefined && body !== null) parts.push('--data-raw', q(body));
     return parts.join(' ');
   };
 
   // ── Errores (§5.4) ─────────────────────────────────────────────────────────
   L.isProblem = (contentType, body) => /^application\/problem\+json\b/i.test(contentType ?? '') && isObj(body) || (isObj(body) && typeof body.code === 'string' && Number.isInteger(body.status));
-  // Qué hacer ante cada código de error de Restep (§5.4); uno desconocido, según la clase del estado.
+  // What to do for each Restep error code (§5.4); an unknown one, by the class of the status.
   L.problemHint = (p) => {
     if (!isObj(p)) return '';
     const hints = t('hints');

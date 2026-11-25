@@ -1,5 +1,5 @@
-// Interfaz: construye la página con DOM (nunca innerHTML con datos de la API) a partir de RestepLogic.
-// Sin estilos en línea ni manejadores en atributos: la CSP de la página no los permite.
+// Interface: builds the page with the DOM (never innerHTML with API data) from RestepLogic.
+// No inline styles or handlers in attributes: the page's CSP does not allow them.
 (function () {
   'use strict';
   const L = window.RestepLogic;
@@ -10,7 +10,7 @@
   const state = { root: '', disc: null, discEntry: null, routeId: 0, log: [], schemaCache: new Map(), userNav: false, pendingNote: null };
   const LOG_MAX = 8;
 
-  // ── Almacenamiento: comodidades locales, siempre con try/catch ─────────────
+  // ── Storage: local conveniences, always with try/catch ─────────────
   const safe = (kind) => ({
     get(k) { try { return window[kind].getItem(k); } catch { return null; } },
     set(k, v) { try { if (v === null || v === undefined || v === '') window[kind].removeItem(k); else window[kind].setItem(k, v); } catch {} },
@@ -21,6 +21,16 @@
   const getToken = () => (state.root ? session.get(tokenKey(state.root)) : null);
   const langPref = () => local.get('restep-explorer:lang') || '';
   const prefs = () => { const l = L.parseAcceptLanguage(langPref()); return l.length ? l : [...(navigator.languages || [navigator.language || 'en'])]; };
+  // 11.1 and 13.1: whether the person trusts this API's declarations of effects; by default, no.
+  const trustKey = (root) => `restep-explorer:trust-effects:${originOf(root)}`;
+  const trusted = () => (state.root ? local.get(trustKey(state.root)) === '1' : false);
+  // The question to ask before an operation, or null when it needs none.
+  const confirmFor = (what, effects, { safe = false } = {}) => {
+    if (!L.needsConfirm(effects, { safe, trusted: trusted() })) return null;
+    const names = t('effectNames');
+    return effects.length ? t('confirmEffects', what, effects.map((x) => `${x} (${names[x]})`).join(', ')) : t('confirmNoEffects', what);
+  };
+  const effectBadges = (effects) => (effects.length ? effects.map((x) => badge(x, 'x')) : [badge(t('effectsNone'))]);
 
   // ── DOM ─────────────────────────────────────────────────────────────────────
   function h(tag, attrs, ...kids) {
@@ -60,7 +70,7 @@
   const hdr = (entry, name) => entry?.headers?.get?.(name) ?? null;
 
   // ── Peticiones ──────────────────────────────────────────────────────────────
-  // Las credenciales solo van al origen de la API (§4.3).
+  // Credentials only go to the API's origin (§4.3).
   async function request(method, target, { body, headers = {} } = {}) {
     const url = /^[a-z][a-z0-9+.-]*:/i.test(target) ? target : L.joinRoot(state.root, target);
     const sent = { Accept: 'application/json', ...headers };
@@ -69,7 +79,7 @@
     const token = getToken();
     if (token && L.sameOrigin(url, state.root)) sent.Authorization = `Bearer ${token}`;
     const entry = { method, url, sent, body, at: new Date() };
-    // §3: no se sigue un enlace cuyo esquema no es https ni el de la raíz.
+    // §3: a link whose scheme is neither https nor the root's is not followed.
     if (!L.allowedScheme(url, state.root)) { entry.networkError = t('errLinkScheme', url); entry.ms = 0; addLog(entry); return entry; }
     const t0 = performance.now();
     try {
@@ -187,17 +197,19 @@
   async function loadDiscovery() {
     setStatus(t('readingDiscovery'));
     let entry = await request('GET', state.root);
-    // Si la raíz no es el documento, puede enlazarlo con rel="service-desc": vale el primero que lo sea (§4.2).
-    if (entry.ok && !L.isDiscovery(entry.json)) {
+    // 4.2: if the root is not the document, it can link it with rel="service-desc": the first target that
+    // is a discovery document of Restep 1 is the one.
+    if (!(entry.ok && L.isRestep1(entry.json))) {
       for (const l of L.parseLinks(hdr(entry, 'link')).filter((x) => x.rel.includes('service-desc'))) {
         let u;
-        try { u = new URL(l.href, entry.responseUrl).href; } catch { continue; }
+        try { u = new URL(l.href, entry.responseUrl || state.root).href; } catch { continue; }
         const e2 = await request('GET', u);
-        if (e2.ok && L.isDiscovery(e2.json)) { entry = e2; break; }
+        if (e2.ok && L.isRestep1(e2.json)) { entry = e2; break; }
       }
     }
     state.discEntry = entry;
-    state.disc = L.parseDiscovery(entry.ok ? entry.json : null);
+    // 4.2: core only after a 2xx without a document or a 404; another error says nothing.
+    state.disc = entry.networkError ? L.discoveryOutcome(0, null) : L.discoveryOutcome(entry.status, entry.json);
     setStatus('');
   }
 
@@ -212,7 +224,8 @@
     }
     const sgs = state.disc?.singletons ?? [];
     const sgList = sgs.length ? [h('h2', { id: 'side-s' }, t('singletons')), h('ul', null, sgs.map((sg) => h('li', null,
-      navLink(sg.path, [sg.name, h('small', { text: sg.path })], { 'aria-current': current === `singleton:${sg.name}` ? 'page' : null }))))] : [];
+      sg.templated ? h('span', { class: 't', title: t('singletonParentIds') }, sg.name, h('small', { text: sg.path }))
+        : navLink(sg.path, [sg.name, h('small', { text: sg.path })], { 'aria-current': current === `singleton:${sg.name}` ? 'page' : null }))))] : [];
     side.replaceChildren(h('h2', { id: 'side-h' }, t('collections')), h('ul', null, items), ...sgList);
   }
 
@@ -240,6 +253,7 @@
     const parts = [...header(state.root, 'API')];
     if (!e.ok) {
       parts.push(problemBox(e));
+      if (d.unavailable) parts.push(h('p', { class: 'note' }, t('unavailableDisc')));
       if (e.status === 401) parts.push(h('p', { class: 'note' }, t('needsToken')));
     } else if (d.coreOnly) {
       parts.push(h('p', { class: 'note' }, t('coreOnly')));
@@ -247,7 +261,7 @@
       parts.push(h('p', { class: 'note' }, t('notRestep1', String(d.restep))));
       parts.push(h('details', { class: 'box ink' }, h('summary', null, t('fullDiscovery')), h('pre', { tabindex: '0' }, h('code', { text: JSON.stringify(d.raw, null, 2) }))));
     }
-    if (!d.coreOnly && !d.notRestep1) {
+    if (!d.coreOnly && !d.notRestep1 && !d.unavailable) {
       if (d.draft) parts.push(h('p', { class: 'note' }, t('draftNote', d.restep)));
       if (d.experimentalIgnored.length) parts.push(h('p', { class: 'note' }, t('experimentalOff', d.experimentalIgnored.join(', '), d.restep)));
       const dl = h('dl', { class: 'kv' });
@@ -269,7 +283,12 @@
         } }, t('check'));
         add(t('statusRes'), h('span', null, code(d.status), ' ', btn, out));
       }
-      parts.push(h('section', { class: 'panel ink', 'aria-label': t('apiData') }, dl));
+      // 11.1, 13.1: whether to trust the effects this API declares; kept per origin in this browser.
+      const trustId = nextId('trust'), trustHid = nextId('trusth');
+      const trust = h('input', { id: trustId, type: 'checkbox', checked: trusted(), 'aria-describedby': trustHid });
+      trust.addEventListener('change', () => local.set(trustKey(state.root), trust.checked ? '1' : null));
+      parts.push(h('section', { class: 'panel ink', 'aria-label': t('apiData') }, dl,
+        h('div', { class: 'checks' }, h('label', { for: trustId }, trust, t('trustEffects'))), h('p', { class: 'hint', id: trustHid }, t('trustHint'))));
       if (d.deprecations.length) parts.push(deprecationsBox(d.deprecations));
       parts.push(h('h3', null, `${t('collections')} (${d.collections.length})`));
       parts.push(h('div', { class: 'cards' }, d.collections.map(collectionCard)));
@@ -290,7 +309,10 @@
     const b = sg.methods ? h('div', { class: 'badges', 'aria-label': t('declaredMethods') }, sg.methods.map((m) => badge(m, 'm'))) : null;
     const dl = h('dl', { class: 'kv' });
     if (Object.keys(sg.schemas).length) dl.append(h('dt', { text: t('schemas') }), h('dd', null, Object.keys(sg.schemas).map((k) => code(k)).flatMap((x, i) => (i ? [', ', x] : [x]))));
-    return h('article', { class: 'card ink' }, h('h3', null, navLink(sg.path, sg.name)), h('p', null, code(sg.path)),
+    // 4.3 and 5.9: the effects of its PATCH, from method_effects; undeclared, all three.
+    if (L.allows(sg.methods, 'PATCH')) dl.append(h('dt', { text: t('effectsLabel') }), h('dd', null, 'PATCH: ', h('span', { class: 'badges' }, effectBadges(L.methodEffects(sg.methodEffects, 'PATCH')))));
+    if (sg.actions.length) dl.append(h('dt', { text: t('actions') }), h('dd', null, sg.actions.map((a) => h('div', null, code(`:${a.name}`), ' ', h('span', { class: 'badges' }, effectBadges(L.actionEffects(a)))))));
+    return h('article', { class: 'card ink' }, h('h3', null, sg.templated ? h('span', null, sg.name) : navLink(sg.path, sg.name)), h('p', null, code(sg.path), sg.parent ? t('hangsFrom', sg.parent) : ''),
       sg.description ? h('p', { text: sg.description }) : null, b, dl, sg.deprecations.length ? deprecationsBox(sg.deprecations) : null);
   }
   function methodBadges(c) {
@@ -308,8 +330,15 @@
     add('count', c.count ? t(c.count === 'exact' ? 'exact' : 'estimated') : null);
     add(t('relations'), c.relations.map((r) => h('div', null, code(r.name), ` → ${r.to.join(' | ') || '?'}${r.many ? t('toMany') : ''}${r.include ? t('includable') : ''}`, r.description ? h('span', { class: 'mute' }, ` · ${r.description}`) : null)));
     add(t('languageMaps'), c.languageMaps.map((m) => code(m)).flatMap((x, i) => (i ? [', ', x] : [x])));
+    add(t('localizedLabel'), Object.entries(c.localized).map(([f, src]) => h('div', null, code(f), ' ← ', code(src))));
+    add(t('uploadLabel'), c.upload ? h('span', null, c.upload.mediaTypes.join(', ') || '—', c.upload.maxSize ? ` · ≤ ${c.upload.maxSize} B` : '') : null);
+    add(t('inheritItemsLabel'), c.inheritItems ? h('span', null, t('fromList', c.inheritItems.from.join(', ')), c.inheritItems.key.length ? [' · key ', code(c.inheritItems.key.join(', '))] : null) : null);
     add(t('inherited'), c.inherit.map((i) => h('div', null, code(i.field), t('writtenIn'), code(i.own), i.from.length ? t('fromList', i.from.join(', ')) : '', i.default ? t('withDefault') : '')));
-    add(t('actions'), c.actions.map((a) => h('div', null, code(`:${a.name}`), ` ${t(a.on === 'item' ? 'onItem' : 'onColl', a.method)}`, a.description ? h('span', { class: 'mute' }, ` · ${a.description}`) : null)));
+    add(t('actions'), c.actions.map((a) => h('div', null, code(`:${a.name}`), ` ${t(a.on === 'item' ? 'onItem' : 'onColl', a.method)} `,
+      h('span', { class: 'badges' }, effectBadges(L.actionEffects(a))), a.description ? h('span', { class: 'mute' }, ` · ${a.description}`) : null)));
+    const methodFx = [...(c.methods ?? []).filter((m) => m === 'POST').map((m) => [t('methodColl', m), L.methodEffects(c.methodEffects, m)]),
+      ...(c.itemMethods ?? ['PATCH', 'DELETE']).filter((m) => m === 'PATCH' || m === 'DELETE').map((m) => [t('methodItem', m), L.methodEffects(c.itemMethodEffects, m)])];
+    add(t('effectsLabel'), methodFx.map(([m, fx]) => h('div', null, `${m}: `, h('span', { class: 'badges' }, effectBadges(fx)))));
     add(t('schemas'), Object.keys(c.schemas).map((k) => code(k)).flatMap((x, i) => (i ? [', ', x] : [x])));
     if (c.sync) add('sync', c.sync.retention ? t('changesKept', fmtSeconds(c.sync.retention)) : t('yes'));
     return h('article', { class: 'card ink' },
@@ -322,8 +351,10 @@
       h('caption', { class: 'sr' }, t('filtersOf', c.name)),
       h('thead', null, h('tr', null, [t('filter'), t('type'), t('operators')].map((x) => h('th', { scope: 'col' }, x)))),
       h('tbody', null, c.filters.map((f) => h('tr', null,
-        h('th', { scope: 'row' }, code(f.field), f.description ? h('div', { class: 'mute', text: f.description }) : null),
-        h('td', null, f.type, f.values.length ? h('div', { class: 'mute', text: f.values.join(', ') }) : null),
+        h('th', { scope: 'row' }, code(f.field), f.required ? h('span', { class: 'mute', text: ` · ${t('requiredBadge')}` }) : null,
+          f.description ? h('div', { class: 'mute', text: f.description }) : null),
+        h('td', null, f.type, f.quantifier ? h('div', { class: 'mute', text: t('quantifierSome') }) : null,
+          f.group && f.ops.includes('null') ? h('div', { class: 'mute', text: t('nullGroup') }) : null, f.values.length ? h('div', { class: 'mute', text: f.values.join(', ') }) : null),
         h('td', null, f.ops.join(' ')))))));
   }
 
@@ -332,13 +363,14 @@
       h('caption', { class: 'sr' }, t('namedOf', c.name)),
       h('thead', null, h('tr', null, [t('namedFilter'), t('value'), t('description')].map((x) => h('th', { scope: 'col' }, x)))),
       h('tbody', null, c.named.map((f) => h('tr', null,
-        h('th', { scope: 'row' }, code(f.name)),
+        h('th', { scope: 'row' }, code(f.name), f.default ? h('span', { class: 'mute', text: ` · ${t('defaultOn')}` }) : null,
+          f.required ? h('span', { class: 'mute', text: ` · ${t('requiredBadge')}` }) : null),
         h('td', null, f.type ?? t('switchNoValue'), f.values.length ? h('div', { class: 'mute', text: f.values.join(', ') }) : null),
         h('td', { text: f.description }))))));
   }
 
-  // Los campos del alta tal como los describe el esquema create (§4.3), en su orden: etiqueta, ayuda,
-  // tipo, opciones, default y ejemplos. Lo que un formulario de verdad pintaría como controles.
+  // The creation fields as the create schema describes them (§4.3), in its order: label, help,
+  // type, options, default and examples. What a real form would draw as controls.
   function formFieldsTable(coll, fields) {
     const json = (v) => JSON.stringify(v);
     return h('div', { class: 'tbl', tabindex: '0', role: 'region', 'aria-label': t('formFieldsOf', coll.name) }, h('table', null,
@@ -379,12 +411,14 @@
     return h('pre', { tabindex: '0' }, h('code', { text: JSON.stringify(v, null, 2) }));
   }
 
-  // ── Colección ───────────────────────────────────────────────────────────────
+  // ── Collection ───────────────────────────────────────────────────────────────
   async function renderCollection(m, path, id) {
     const coll = m.coll;
     renderSide(coll.name);
     setStatus(t('loading', m.pathname));
-    const e = await request('GET', path);
+    // 4.3: a collection whose declared methods leave out GET cannot be listed.
+    const listable = L.allows(coll.methods, 'GET');
+    const e = listable ? await request('GET', path) : null;
     if (id !== state.routeId) return;
     setStatus('');
     const q = L.parseQuery(m.query, coll);
@@ -392,14 +426,22 @@
     if (state.pendingNote) { parts.push(h('p', { class: 'okmsg', role: 'status' }, state.pendingNote)); state.pendingNote = null; }
     if (coll.description) parts.push(h('p', { text: coll.description }));
     parts.push(methodBadges(coll));
-    if (L.has(state.disc, 'query')) parts.push(queryForm(coll, m, q, e));
-    else if (m.query) parts.push(h('p', { class: 'note' }, t('noQueryProfile')));
-    parts.push(...resultsBlock(coll, m, q, e));
+    if (!listable) parts.push(h('p', { class: 'note' }, t('noList')));
+    else {
+      if (L.has(state.disc, 'query')) parts.push(queryForm(coll, m, q, e));
+      else if (m.query) parts.push(h('p', { class: 'note' }, t('noQueryProfile')));
+      parts.push(...resultsBlock(coll, m, q, e));
+      // 5.6: the language of localized fields is the response's.
+      const lang = hdr(e, 'content-language');
+      if (lang && Object.keys(coll.localized).length) parts.push(h('p', { class: 'hint' }, t('languageReceived', lang)));
+    }
     if (L.has(state.disc, 'actions')) {
       const acts = coll.actions.filter((a) => a.on === 'collection').map((a) => ({ ...a, href: `${m.pathname}:${a.name}` }));
       if (acts.length) parts.push(actionsBox(coll, acts, false));
     }
-    if (L.allows(coll.methods, 'POST')) parts.push(createBox(coll, m));
+    // 5.1 (council, round 3, decision 1): a collection with upload and without schemas.create only takes files.
+    if (L.allows(coll.methods, 'POST') && L.createsFromJson(coll)) parts.push(createBox(coll, m));
+    if (coll.upload && L.allows(coll.methods, 'POST')) parts.push(uploadBox(coll, m));
     view(parts);
   }
 
@@ -440,7 +482,8 @@
       h('caption', { class: 'sr' }, t('itemsCaption', coll.name)),
       h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'id'), cols.map((c) => h('th', { scope: 'col' }, c)))),
       h('tbody', null, items.map((it) => h('tr', null,
-        h('th', { scope: 'row' }, typeof it.id === 'string' ? navLink(L.itemPath(coll, m.values, it.id), it.id) : renderValue(it.id)),
+        h('th', { scope: 'row' }, typeof it.id === 'string' ? navLink(L.itemPath(coll, m.values, it.id), it.id) : renderValue(it.id),
+          L.inheritedItemSource(coll, it) ? [' ', badge(t('inheritedRow'))] : null),
         cols.map((c) => h('td', { class: typeof it[c] === 'object' && it[c] !== null ? 'json' : null }, renderValue(it[c], c, coll, m.values, true))))))));
   }
 
@@ -455,7 +498,7 @@
       form.append(h('fieldset', null, h('legend', null, t('filtersLegend')), fRows,
         h('button', { type: 'button', class: 'btn small', onclick: () => { addFilter(null); fRows.lastElementChild.querySelector('select').focus(); } }, icon('plus'), t('addFilter'))));
     } else form.append(h('p', { class: 'hint' }, t('noFilters')));
-    // Filtros con nombre (§6.1): un interruptor es una casilla; uno con type, un valor de su tipo.
+    // Named filters (§6.1): a switch is a checkbox; one with type, a value of its type.
     const namedRows = [];
     if (coll.named.length) {
       const box = h('div', { class: 'named' });
@@ -463,9 +506,11 @@
         const id = nextId('nf'), hid = nextId('nh');
         const on = Object.hasOwn(q.named, f.name);
         if (!f.type) {
-          const el = h('input', { id, type: 'checkbox', checked: on, 'aria-describedby': f.description ? hid : null });
-          namedRows.push(() => [f.name, el.checked ? '' : null]);
-          box.append(h('div', { class: 'checks' }, h('label', { for: id }, el, code(f.name))), f.description ? h('p', { class: 'hint', id: hid, text: f.description }) : null);
+          // 6.1: a default switch applies unless the request turns it off with filter[name]=false.
+          const el = h('input', { id, type: 'checkbox', checked: f.default ? q.named[f.name] !== 'false' : on, 'aria-describedby': f.description || f.default ? hid : null });
+          namedRows.push(() => [f.name, f.default ? (el.checked ? null : 'false') : el.checked ? '' : null]);
+          const help = [f.description, f.default ? t('defaultHint', f.name) : ''].filter(Boolean).join(' ');
+          box.append(h('div', { class: 'checks' }, h('label', { for: id }, el, code(f.name), f.default ? ` · ${t('defaultOn')}` : '')), help ? h('p', { class: 'hint', id: hid, text: help }) : null);
         } else {
           const c = L.valueControl(f, 'eq');
           const el = c.kind === 'select'
@@ -486,7 +531,7 @@
       form.append(h('fieldset', null, h('legend', null, t('sort')), sRows,
         h('button', { type: 'button', class: 'btn small', onclick: () => { addSort(null); sRows.lastElementChild.querySelector('select').focus(); } }, icon('plus'), t('addSort'))));
     }
-    // Campos (§6.3): del esquema del elemento si es un objeto; si no, de los elementos de esta página.
+    // Fields (§6.3): from the item schema if it is an object; otherwise, from the items of this page.
     const known = new Set();
     const schema = coll.schemas.item;
     if (isObj(schema) && isObj(schema.properties)) Object.keys(schema.properties).forEach((k) => known.add(k));
@@ -498,7 +543,7 @@
       form.append(h('fieldset', null, h('legend', null, t('fieldsLegend')),
         h('div', { class: 'checks' }, fieldNames.map((f) => h('label', null, h('input', { type: 'checkbox', name: 'fields', value: f, checked: q.fields.includes(f) }), f)))));
     }
-    // include (§9): las relaciones incluibles y, hasta include_depth, las de sus destinos (category.parent).
+    // include (§9): the includable relations and, up to include_depth, those of their targets (category.parent).
     const incl = L.includePaths(state.disc, coll);
     if (L.has(state.disc, 'relations') && incl.length) {
       form.append(h('fieldset', null, h('legend', null, t('includeLegend')),
@@ -527,8 +572,15 @@
     form.addEventListener('input', update);
     form.addEventListener('change', update);
     form.addEventListener('click', (ev) => { if (ev.target.closest('button')) setTimeout(update); });
-    form.addEventListener('submit', (ev) => { ev.preventDefault(); go(L.withQuery(m.pathname, L.buildQuery(read()))); });
-    form.append(preview, h('div', { class: 'row mt8' },
+    // 6.1 (council, round 4, decision 5a): never two null filters on one group.
+    const clash = h('div');
+    form.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const nq = read(), g = L.nullGroupClash(coll, nq.filters);
+      if (g !== null) { clash.replaceChildren(h('p', { class: 'problem', role: 'alert' }, t('nullTwice', g))); return; }
+      go(L.withQuery(m.pathname, L.buildQuery(nq)));
+    });
+    form.append(preview, clash, h('div', { class: 'row mt8' },
       h('button', { type: 'submit', class: 'btn hot' }, icon('go'), t('runQuery')),
       h('button', { type: 'button', class: 'btn', onclick: () => go(m.pathname) }, t('clear'))));
     update();
@@ -551,7 +603,7 @@
     const rebuildValue = (val) => {
       const c = L.valueControl(current(), opSel.value);
       valueEl = c.kind === 'select'
-        ? h('select', { id: ids.val }, c.options.map(([v, label]) => h('option', { value: v }, label)))
+        ? h('select', { id: ids.val, 'aria-describedby': c.hint ? ids.hint : null }, c.options.map(([v, label]) => h('option', { value: v }, label)))
         : h('input', { id: ids.val, type: c.type, inputmode: c.inputmode, placeholder: c.placeholder, spellcheck: 'false', autocomplete: 'off', 'aria-describedby': c.hint ? ids.hint : null });
       if (val !== undefined) valueEl.value = val;
       valBox.replaceChildren(h('label', { for: ids.val }, t('value')), valueEl, c.hint ? h('p', { class: 'hint', id: ids.hint, text: c.hint }) : null);
@@ -588,7 +640,7 @@
     return row;
   }
 
-  // ── Esquemas (§4.3): objeto o enlace; los de otro origen se piden sin credenciales ──
+  // ── Schemas (§4.3): object or link; those of another origin are requested without credentials ──
   async function resolveSchema(s) {
     if (isObj(s)) return s;
     if (typeof s !== 'string') return null;
@@ -605,9 +657,10 @@
     return h('details', null, h('summary', null, t('seeSchema')), h('pre', { tabindex: '0' }, h('code', { text: JSON.stringify(schema, null, 2) })));
   }
 
-  // Un formulario de cuerpo JSON con Idempotency-Key automática: la misma clave mientras no llegue
-  // respuesta, para que un reintento tras un fallo de red no duplique nada (§7.1).
-  function jsonForm({ title, intro, initial, schema, method, idempotency, ifMatch, submitLabel, submitIcon, onDone, makeRequest, danger, noBody, emptyMessage = t('noChanges') }) {
+  // A JSON-body form with an automatic Idempotency-Key: the same key until a response
+  // arrives, so a retry after a network failure does not duplicate anything (§7.1).
+  // confirmMsg: the question to ask before sending (effects, 11.1), or null; extra: more controls.
+  function jsonForm({ title, intro, initial, schema, method, idempotency, ifMatch, submitLabel, submitIcon, onDone, makeRequest, danger, noBody, emptyMessage = t('noChanges'), confirmMsg = null, extra = null }) {
     const form = h('form', { novalidate: true });
     const taId = nextId('body'), hintId = nextId('bh');
     let key = idempotency ? L.newIdempotencyKey() : null;
@@ -618,6 +671,7 @@
     if (intro) form.append(h('p', { class: 'hint', id: hintId }, intro));
     if (ta) form.append(h('label', { for: taId }, t('bodyJson')), ta);
     if (schema) form.append(schemaDetails(schema));
+    if (extra) form.append(extra);
     const meta = h('p', { class: 'hint' });
     if (idempotency) meta.append('Idempotency-Key: ', keyOut, ` ${t('keyRenewed')} `);
     if (ifMatch !== undefined) meta.append(ifMatch ? h('span', null, 'If-Match: ', code(ifMatch)) : h('span', null, t('noIfMatch')));
@@ -631,6 +685,9 @@
       }
       const req = makeRequest(body);
       if (!req) { result.replaceChildren(h('p', { class: 'note', role: 'status' }, emptyMessage)); return; }
+      if (req.error) { result.replaceChildren(h('p', { class: 'problem', role: 'alert' }, req.error)); return; }
+      const ask = typeof confirmMsg === 'function' ? confirmMsg(req) : confirmMsg;
+      if (ask && !window.confirm(ask)) { result.replaceChildren(h('p', { class: 'note', role: 'status' }, t('notConfirmed'))); return; }
       const headers = { ...req.headers };
       if (key) headers['Idempotency-Key'] = key;
       if (ifMatch) headers['If-Match'] = ifMatch;
@@ -662,23 +719,26 @@
       const loading = h('p', { class: 'mute' }, t('preparingForm'));
       box.append(loading);
       const schema = await resolveSchema(coll.schemas.create);
-      // §4.3: el cuerpo empieza con los obligatorios y los default; con la acción new (§12), con lo que
-      // devuelva GET colección:new para este cliente y este momento.
-      let initial = L.createSkeleton(coll, schema), from = null;
+      // 4.3: the body starts with the required fields and the defaults; 11.1: with the action new, with
+      // the values that GET collection:new gives for this principal, and its effective schema.
+      let initial = L.createSkeleton(coll, schema), from = null, effective = null;
       const act = L.newAction(state.disc, coll);
       if (act) {
         const path = `${m.pathname}:${act.name}`;
         const r = await request('GET', path);
-        from = r.ok && isObj(r.json) ? t('newFilled', path) : t('newFailed', path, r.networkError ? '—' : String(r.status));
-        if (r.ok && isObj(r.json)) initial = { ...initial, ...r.json };
+        const start = r.ok ? L.newStart(r.json) : null;
+        from = start ? t('newFilled', path) : t('newFailed', path, r.networkError ? '—' : String(r.status));
+        if (start) { initial = { ...initial, ...start.values }; effective = start.schema; }
       }
       loading.remove();
-      const fields = L.formFields(schema);
+      const fields = L.formFields(effective ?? schema);
       if (fields.length) box.append(formFieldsTable(coll, fields));
+      if (effective) box.append(h('details', null, h('summary', null, t('newSchema')), h('pre', { tabindex: '0' }, h('code', { text: JSON.stringify(effective, null, 2) }))));
       box.append(jsonForm({
-        intro: [t('createIntro', m.pathname, !!schema), coll.idFrom === 'client' ? t('idFromClient') : coll.idFrom === 'either' ? t('idFromEither') : coll.idFrom === 'unknown' ? t('idFromUnknown') : t('idFromServer'), from].filter(Boolean).join(' '),
+        intro: [t('createIntro', m.pathname, !!schema), coll.upload ? t('createMixed') : null, coll.idFrom === 'client' ? t('idFromClient') : coll.idFrom === 'either' ? t('idFromEither') : coll.idFrom === 'unknown' ? t('idFromUnknown') : t('idFromServer'), from].filter(Boolean).join(' '),
         initial, schema, method: 'POST', idempotency: writes && (state.disc.idempotencyAnonymous || !!getToken()), submitLabel: t('create'), submitIcon: 'plus',
         makeRequest: (body) => ({ path: m.pathname, body: JSON.stringify(L.createPayload(coll, body)), headers: { 'Content-Type': 'application/json' } }),
+        confirmMsg: () => confirmFor(`POST ${m.pathname}`, L.methodEffects(coll.methodEffects, 'POST')),
         onDone: (r) => {
           const loc = hdr(r, 'location');
           const p = (loc && L.toApiPath(state.root, loc, r.responseUrl)) || (isObj(r.json) && typeof r.json.id === 'string' ? L.itemPath(coll, m.values, r.json.id) : null);
@@ -689,27 +749,84 @@
     return box;
   }
 
+  // 5.1: a collection that declares upload takes a file's bytes, with their own Content-Type and the
+  // original name in Content-Disposition. The explorer checks the type and the size before sending.
+  function uploadBox(coll, m) {
+    const box = h('details', { class: 'box ink' }, h('summary', null, t('uploadBox')));
+    const fid = nextId('file');
+    const input = h('input', { id: fid, type: 'file', accept: coll.upload.mediaTypes.join(',') || null });
+    const result = h('div', { 'aria-live': 'polite' });
+    const form = h('form', { novalidate: true },
+      h('p', { class: 'hint' }, t('uploadIntro', coll.upload.mediaTypes.join(', ') || '—', coll.upload.maxSize),
+        ' ', L.createsFromJson(coll) ? t('uploadJsonMultipart') : t('uploadOnlyFiles')),
+      h('label', { for: fid }, t('uploadFile')), input,
+      h('div', { class: 'row mt8' }, h('button', { type: 'submit', class: 'btn hot' }, icon('plus'), t('uploadSend'))), result);
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const file = input.files?.[0];
+      if (!file) { result.replaceChildren(h('p', { class: 'problem', role: 'alert' }, t('uploadNoFile'))); return; }
+      const why = L.uploadProblem(coll.upload, file);
+      if (why) { result.replaceChildren(h('p', { class: 'problem', role: 'alert' }, why === 'size' ? t('uploadTooBig', file.size, coll.upload.maxSize) : t('uploadBadType', file.type))); return; }
+      const ask = confirmFor(`POST ${m.pathname}`, L.methodEffects(coll.methodEffects, 'POST'));
+      if (ask && !window.confirm(ask)) { result.replaceChildren(h('p', { class: 'note', role: 'status' }, t('notConfirmed'))); return; }
+      // 5.1 (council, round 3, decision 2): a JSON file to a collection that creates items from JSON goes as multipart.
+      const mode = L.uploadMode(coll, file);
+      if (mode === 'none') { result.replaceChildren(h('p', { class: 'problem', role: 'alert' }, t('uploadJsonNoMultipart'))); return; }
+      let body = file, headers = { 'Content-Type': file.type, 'Content-Disposition': L.contentDisposition(file.name) };
+      if (mode === 'multipart') { body = new FormData(); body.append('file', file, L.multipartFileName(file)); headers = {}; }
+      const r = await request('POST', m.pathname, { body, headers });
+      if (r.networkError) { result.replaceChildren(networkProblem(r)); return; }
+      if (!r.ok) { result.replaceChildren(problemBox(r, { alert: true })); return; }
+      const loc = hdr(r, 'location');
+      const p = (loc && L.toApiPath(state.root, loc, r.responseUrl)) || (isObj(r.json) && typeof r.json.id === 'string' ? L.itemPath(coll, m.values, r.json.id) : null);
+      if (p) { state.pendingNote = t('created', p); go(p); }
+      else result.replaceChildren(h('p', { class: 'okmsg', role: 'status' }, String(r.status)));
+    });
+    box.append(form);
+    return box;
+  }
+
   // ── Acciones (§11.1) ────────────────────────────────────────────────────────
   function actionsBox(coll, acts, onItem, reload) {
     const writes = L.has(state.disc, 'writes');
     const sec = h('section', { class: 'panel ink', 'aria-labelledby': 'act-h' }, h('h3', { id: 'act-h', class: 'mt0' }, t('actions')));
     for (const a of acts) {
       const art = h('div', { class: 'action' });
-      const badges = h('div', { class: 'badges' }, badge(a.method, 'm'), a.safe ? badge(t('safe')) : badge(t('unsafe'), 'x'), a.idempotent ? badge(t('idempotent')) : null);
+      const fx = L.actionEffects(a);
+      const badges = h('div', { class: 'badges' }, badge(a.method, 'm'), a.safe ? badge(t('safe')) : badge(t('unsafe'), 'x'), a.idempotent ? badge(t('idempotent')) : null, effectBadges(fx));
       art.append(h('h4', null, code(`:${a.name}`)), badges, a.description ? h('p', { text: a.description }) : null);
       const build = async () => {
         const schema = a.method === 'POST' ? await resolveSchema(a.input) : null;
+        // 11.1: a GET action takes its declared params in the query.
+        const inputs = {};
+        const extra = a.method === 'GET' && a.params?.length ? h('fieldset', null, h('legend', null, t('paramsLegend')), a.params.map((p) => {
+          const pid = nextId('ap');
+          inputs[p.name] = h('input', { id: pid, type: 'text', spellcheck: 'false', autocomplete: 'off', placeholder: p.list ? 'a,b' : '' });
+          return h('div', null, h('label', { for: pid }, code(p.name), ` · ${p.type || '?'}${p.list ? ' (list)' : ''}${p.required ? ` · ${t('requiredBadge')}` : ''}`), inputs[p.name],
+            p.description ? h('p', { class: 'hint', text: p.description }) : null);
+        })) : null;
+        const out = h('div');
         art.append(jsonForm({
-          intro: `${a.method} ${a.href}`, initial: schema ? L.skeleton(schema) : {}, schema, method: a.method, noBody: a.method === 'GET',
+          intro: `${a.method} ${a.href}`, initial: schema ? L.skeleton(schema) : {}, schema, method: a.method, noBody: a.method === 'GET', extra,
           idempotency: writes && a.method === 'POST' && !a.idempotent && (state.disc.idempotencyAnonymous || !!getToken()), submitLabel: t('run'), submitIcon: 'bolt',
-          makeRequest: (body) => ({ path: a.href, body: a.method === 'GET' ? undefined : JSON.stringify(body), headers: a.method === 'GET' ? {} : { 'Content-Type': 'application/json' } }),
+          makeRequest: (body) => {
+            if (a.method !== 'GET') return { path: a.href, body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } };
+            const q = L.actionQuery(a.params, Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value])));
+            return q.error ? { error: t('paramMissing', q.param) } : { path: L.withQuery(a.href, q.query), headers: {} };
+          },
+          confirmMsg: (req) => confirmFor(`${a.method} ${req.path}`, fx, { safe: a.safe }),
           onDone: (r) => {
+            // 11.1: the 200 of a safe action with output is its result, not the item.
+            if (a.safe && a.output && r.status === 200) {
+              out.replaceChildren(h('span', { class: 'lbl' }, t('outputLabel')), h('pre', { tabindex: '0' }, h('code', { text: truncate(pretty(r), 8000) })));
+              return;
+            }
             const loc = r.status === 201 ? hdr(r, 'location') : null;
             const p = loc && L.toApiPath(state.root, loc, r.responseUrl);
             if (p) { state.pendingNote = t('actionCreated', a.name, p); go(p); }
             else if (onItem && !a.safe && reload) { state.pendingNote = t('actionStatus', a.name, r.status); reload(); }
           },
-        }));
+        }), out);
       };
       build();
       sec.append(art);
@@ -739,6 +856,7 @@
     for (const [k, v] of Object.entries(item)) {
       if (k.startsWith('_')) continue;
       const dd = h('dd', null, renderValue(v, k, coll, m.values, false));
+      if (Object.hasOwn(coll.localized, k)) dd.append(h('div', { class: 'hint' }, t('localizedFrom', coll.localized[k])));
       const inh = coll.inherit.find((i) => i.field === k);
       if (inh) {
         const src = L.inheritedFrom(item._inherited, k);
@@ -749,8 +867,19 @@
       }
       dl.append(h('dt', { text: k }), dd);
     }
+    // 5.1: an item made from an upload links its bytes in _content.
+    const content = isObj(item._content) && typeof item._content.href === 'string' ? item._content : null;
+    const contentHref = content ? (() => { try { const u = new URL(content.href, e.responseUrl).href; return L.allowedScheme(u, state.root) ? u : null; } catch { return null; } })() : null;
+    if (contentHref) dl.append(h('dt', { text: t('contentLink') }), h('dd', null, h('a', { href: contentHref, target: '_blank', rel: 'noopener noreferrer' }, content.href),
+      h('span', { class: 'mute', text: ` · ${content.media_type ?? '?'}${Number.isInteger(content.size) ? ` · ${content.size} B` : ''}` })));
+    // 11.6: an inherited item is read-only here; _from says where it comes from.
+    const fromHref = L.inheritedItemSource(coll, item);
+    const fromPath = fromHref ? L.toApiPath(state.root, fromHref, e.responseUrl) : null;
+    if (fromHref) parts.push(h('p', { class: 'note' }, t('inheritedItem'), fromPath ? navLink(fromPath, fromPath) : code(fromHref), '.'));
+    const lang = hdr(e, 'content-language');
     parts.push(h('section', { class: 'panel ink', 'aria-label': t('fields') }, dl,
-      h('p', { class: 'hint' }, t('itemEtag'), etag ? code(etag) : t('etagUnavailable'))));
+      h('p', { class: 'hint' }, t('itemEtag'), etag ? code(etag) : t('etagUnavailable')),
+      lang && Object.keys(coll.localized).length ? h('p', { class: 'hint' }, t('languageReceived', lang)) : null));
     // Relaciones y subcolecciones (§9)
     const rels = L.relationLinks(state.disc, coll, m.values, item, state.root);
     const subs = L.subcollections(state.disc, coll, m.values, m.id);
@@ -763,12 +892,12 @@
       for (const s of subs) ul.append(h('li', null, t('subcollection'), code(s.coll.name), ': ', navLink(s.path, s.path)));
       parts.push(h('section', { class: 'panel ink', 'aria-labelledby': 'rel-h' }, h('h3', { id: 'rel-h', class: 'mt0' }, t('relations')), ul));
     }
-    // Acciones: _actions dice cuáles están disponibles ahora; si no lo trae, las declaradas.
+    // Actions: _actions says which are available now; if absent, the declared ones.
     const reload = () => route();
     if (L.has(state.disc, 'actions') || isObj(item._actions)) {
       let acts;
       if (isObj(item._actions)) {
-        // §11.1: un method desconocido en _actions: la acción no se ofrece.
+        // §11.1: an unknown method in _actions: the action is not offered.
         acts = Object.entries(item._actions).filter(([, a]) => isObj(a) && typeof a.href === 'string' && [undefined, 'GET', 'POST'].includes(a.method)).map(([name, a]) => {
           const decl = coll.actions.find((x) => x.name === name) ?? { name, on: 'item', safe: false, idempotent: false, description: '', input: null };
           return { ...decl, name, method: a.method === 'GET' ? 'GET' : 'POST', href: L.toApiPath(state.root, a.href, e.responseUrl) ?? a.href };
@@ -778,7 +907,7 @@
     }
     const writes = L.has(state.disc, 'writes');
     // Editar (§5.1: PATCH con Merge Patch; §7.2: If-Match)
-    if (L.allows(coll.itemMethods, 'PATCH')) {
+    if (L.allows(coll.itemMethods, 'PATCH') && !fromHref) {
       const original = L.editableCopy(coll, item);
       const whole = coll.relations.map((r) => r.name);
       parts.push(h('details', { class: 'box ink' }, h('summary', null, t('editPatch')), jsonForm({
@@ -789,15 +918,18 @@
           const diff = L.mergeDiff(original, body, whole);
           return Object.keys(diff).length ? { path: m.pathname, body: JSON.stringify(diff), headers: { 'Content-Type': 'application/merge-patch+json' } } : null;
         },
+        confirmMsg: () => confirmFor(`PATCH ${m.pathname}`, L.methodEffects(coll.itemMethodEffects, 'PATCH')),
         onDone: () => { state.pendingNote = t('saved'); reload(); },
       })));
     }
     // Borrar
-    if (L.allows(coll.itemMethods, 'DELETE')) {
+    if (L.allows(coll.itemMethods, 'DELETE') && !fromHref) {
       const form = jsonForm({
         intro: t('deleteIntro'), noBody: true, method: 'DELETE', ifMatch: writes ? etag ?? null : undefined,
         submitLabel: t('delete'), submitIcon: 'trash', danger: true, emptyMessage: t('nothingDeleted'),
-        makeRequest: () => (window.confirm(t('confirmDelete', m.pathname)) ? { path: m.pathname, headers: {} } : null),
+        makeRequest: () => ({ path: m.pathname, headers: {} }),
+        // 4.3: an undeclared DELETE has ["destroys"]; with [] and a trusted API, it does not ask.
+        confirmMsg: () => confirmFor(`DELETE ${m.pathname}`, L.methodEffects(coll.itemMethodEffects, 'DELETE')),
         onDone: () => { state.pendingNote = t('deleted', m.pathname); go(collPath); },
       });
       parts.push(h('details', { class: 'box ink' }, h('summary', null, t('deleteBox')), form));
@@ -805,7 +937,7 @@
     view(parts);
   }
 
-  // ── Recurso suelto (§5.9): se lee y, si admite PATCH, se edita con Merge Patch e If-Match ──
+  // ── Singleton (§5.9): it is read and, if it accepts PATCH, edited with Merge Patch and If-Match ──
   async function renderSingleton(m, path, id) {
     const sg = m.singleton;
     renderSide(`singleton:${sg.name}`);
@@ -816,6 +948,7 @@
     const parts = [...header(sg.name, t('singletonKicker', m.pathname))];
     if (state.pendingNote) { parts.push(h('p', { class: 'okmsg', role: 'status' }, state.pendingNote)); state.pendingNote = null; }
     if (sg.description) parts.push(h('p', { text: sg.description }));
+    if (sg.parent) parts.push(h('p', { class: 'mute' }, code(sg.path), t('hangsFrom', sg.parent)));
     if (sg.methods) parts.push(h('div', { class: 'badges', 'aria-label': t('declaredMethods') }, sg.methods.map((x) => badge(x, 'm'))));
     if (sg.deprecations.length) parts.push(deprecationsBox(sg.deprecations));
     if (!e.ok) { parts.push(problemBox(e)); view(parts); return; }
@@ -827,8 +960,14 @@
     for (const [k, v] of Object.entries(item)) if (!k.startsWith('_')) dl.append(h('dt', { text: k }), h('dd', null, renderValue(v, k, null, [], false)));
     parts.push(h('section', { class: 'panel ink', 'aria-label': t('fields') }, dl,
       h('p', { class: 'hint' }, t('itemEtag'), etag ? code(etag) : t('etagUnavailable'))));
+    // 5.9, 11.1: a singleton's actions are used at {path}:{name}; _actions, if present, says which apply now.
+    if (L.has(state.disc, 'actions') && sg.actions.length) {
+      const avail = isObj(item._actions) ? item._actions : null;
+      const acts = sg.actions.filter((a) => !avail || Object.hasOwn(avail, a.name)).map((a) => ({ ...a, href: `${m.pathname.replace(/\/+$/, '')}:${a.name}` }));
+      if (acts.length) parts.push(actionsBox(null, acts, true, () => route()));
+    }
     if (L.allows(sg.methods, 'PATCH')) {
-      // Sin id ni colección; los readOnly del esquema item no se ofrecen (§5.1, §5.9).
+      // No id or collection; the readOnly fields of the item schema are not offered (§5.1, §5.9).
       const original = L.editableCopy({ schemas: sg.schemas }, item);
       const writes = L.has(state.disc, 'writes');
       parts.push(h('details', { class: 'box ink' }, h('summary', null, t('editPatch')), jsonForm({
@@ -838,6 +977,8 @@
           const diff = L.mergeDiff(original, body);
           return Object.keys(diff).length ? { path: m.pathname, body: JSON.stringify(diff), headers: { 'Content-Type': 'application/merge-patch+json' } } : null;
         },
+        // 4.3 and 5.9: a singleton's PATCH has the effects of its method_effects; undeclared, all three.
+        confirmMsg: () => confirmFor(`PATCH ${m.pathname}`, L.methodEffects(sg.methodEffects, 'PATCH')),
         onDone: () => { state.pendingNote = t('saved'); route(); },
       })));
     }
@@ -858,7 +999,7 @@
   }
 
   // ── Enrutado ────────────────────────────────────────────────────────────────
-  // El enlace a la otra versión de idioma conserva dónde estás (el hash nunca lleva el token).
+  // The link to the other language version keeps where you are (the hash never carries the token).
   const otherLang = $('#other-lang');
   const otherLangBase = otherLang ? otherLang.getAttribute('href').replace(/#.*$/, '') : '';
   async function route() {
@@ -891,7 +1032,7 @@
     ev.preventDefault();
     let root;
     try { root = L.normalizeRoot($('#api-url').value); } catch (err) { setStatus(err.message); $('#api-url').focus(); return; }
-    state.disc = null; // vuelve a leer el descubrimiento aunque sea la misma API
+    state.disc = null; // reads the discovery again even if it is the same API
     state.root = root;
     go('/');
   });
@@ -926,7 +1067,7 @@
     state.disc = null;
     if (state.root) route();
   });
-  // Tema: automático, claro u oscuro.
+  // Theme: automatic, light or dark.
   const THEMES = { auto: [t('themeAuto'), 'auto'], light: [t('themeLight'), 'sun'], dark: [t('themeDark'), 'moon'] };
   const themeBtn = $('#theme');
   const paintTheme = () => {
